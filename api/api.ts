@@ -4,9 +4,8 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // IMPORTANT: Change this to your computer's IP address
 // Find it: Windows (ipconfig), Mac (ifconfig), Linux (ip addr)
-const API_URL = __DEV__ 
-  ? "http://10.69.75.28:5000"  // ← CHANGE THIS TO YOUR IP!
-  : "https://your-production-url.com";
+const API_URL = "https://zeni-backend.up.railway.app"; 
+
 
 const api = axios.create({
   baseURL: API_URL,
