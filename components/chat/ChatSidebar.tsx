@@ -7,14 +7,42 @@ import {
 } from "@/utils/metrics";
 import { Ionicons } from "@expo/vector-icons";
 import { DrawerContentScrollView } from "@react-navigation/drawer";
-import { useState } from "react";
-import { Alert, Pressable, Switch, Text, TextInput, View } from "react-native";
+import { useEffect, useState } from "react";
+import { 
+  Alert, 
+  Pressable, 
+  Switch, 
+  Text, 
+  TextInput, 
+  View,
+  ActivityIndicator,
+  RefreshControl
+} from "react-native";
 
 export default function ChatSidebar(props: any) {
   const { theme, mode, toggleTheme } = useThemeStore();
-  const { chats, activeChat, addChat, deleteChat, setActiveChat, clearAllChats } = useChatStore();
+  const { 
+    chats, 
+    activeChat, 
+    addChat, 
+    deleteChat, 
+    setActiveChat, 
+    clearAllChats,
+    loadChatsFromServer,
+    syncLocalToServer,
+    isLoading,
+    isSyncing,
+    lastSyncTime
+  } = useChatStore();
+  
   const [searchQuery, setSearchQuery] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Load chats from server on mount
+  useEffect(() => {
+    loadChatsFromServer();
+  }, []);
 
   const filteredChats = chats.filter((chat) => {
     const title = chat?.title || "";
@@ -30,13 +58,44 @@ export default function ChatSidebar(props: any) {
         {
           text: "Clear All",
           style: "destructive",
-          onPress: () => {
-            clearAllChats();
+          onPress: async () => {
+            await clearAllChats();
             props.navigation.closeDrawer();
           },
         },
       ]
     );
+  };
+
+  const handleSyncToServer = async () => {
+    try {
+      Alert.alert(
+        "Sync to Server",
+        "This will upload your local chats to the server. Continue?",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Sync",
+            onPress: async () => {
+              try {
+                await syncLocalToServer();
+                Alert.alert("Success", "Chats synced to server successfully!");
+              } catch (error) {
+                Alert.alert("Error", "Failed to sync chats to server");
+              }
+            },
+          },
+        ]
+      );
+    } catch (error) {
+      console.error("Error syncing:", error);
+    }
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await loadChatsFromServer();
+    setRefreshing(false);
   };
 
   const handleExportChats = () => {
@@ -45,6 +104,24 @@ export default function ChatSidebar(props: any) {
       "Export feature coming soon! You'll be able to save your conversations.",
       [{ text: "OK" }]
     );
+  };
+
+  const formatSyncTime = (isoString: string | null) => {
+    if (!isoString) return "Never";
+    
+    const date = new Date(isoString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    
+    if (diffMins < 1) return "Just now";
+    if (diffMins < 60) return `${diffMins}m ago`;
+    
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+    
+    const diffDays = Math.floor(diffHours / 24);
+    return `${diffDays}d ago`;
   };
 
   return (
@@ -87,6 +164,16 @@ export default function ChatSidebar(props: any) {
         </View>
       </View>
 
+      {/* Loading Indicator */}
+      {isLoading && (
+        <View style={{ 
+          paddingVertical: verticalScale(12),
+          alignItems: "center" 
+        }}>
+          <ActivityIndicator color={theme.primary} />
+        </View>
+      )}
+
       {/* Chat List */}
       <DrawerContentScrollView
         {...props}
@@ -95,11 +182,19 @@ export default function ChatSidebar(props: any) {
           flexGrow: 1,
         }}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor={theme.primary}
+            colors={[theme.primary]}
+          />
+        }
       >
         {/* New Chat Button */}
         <Pressable
-          onPress={() => {
-            addChat();
+          onPress={async () => {
+            await addChat();
             props.navigation.closeDrawer();
           }}
           style={({ pressed }) => ({
@@ -142,8 +237,8 @@ export default function ChatSidebar(props: any) {
           return (
             <Pressable
               key={item.id}
-              onPress={() => {
-                setActiveChat(item.id);
+              onPress={async () => {
+                await setActiveChat(item.id);
                 props.navigation.closeDrawer();
               }}
               style={({ pressed }) => ({
@@ -205,6 +300,34 @@ export default function ChatSidebar(props: any) {
           backgroundColor: theme.background,
         }}
       >
+        {/* Sync Status */}
+        {lastSyncTime && (
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              paddingVertical: verticalScale(8),
+              paddingHorizontal: horizontalScale(16),
+            }}
+          >
+            <Ionicons
+              name="cloud-done-outline"
+              size={moderateScale(14)}
+              color={theme.mutedText}
+            />
+            <Text
+              style={{
+                color: theme.mutedText,
+                fontSize: moderateScale(12),
+                marginLeft: horizontalScale(6),
+              }}
+            >
+              Synced {formatSyncTime(lastSyncTime)}
+            </Text>
+          </View>
+        )}
+
         {/* Settings Toggle */}
         <Pressable
           onPress={() => setShowSettings(!showSettings)}
@@ -282,6 +405,48 @@ export default function ChatSidebar(props: any) {
                 thumbColor="#FFFFFF"
               />
             </View>
+
+            {/* Divider */}
+            <View
+              style={{
+                height: 1,
+                backgroundColor: theme.border,
+                marginHorizontal: horizontalScale(16),
+              }}
+            />
+
+            {/* Sync to Server Button */}
+            <Pressable
+              onPress={handleSyncToServer}
+              disabled={isSyncing}
+              style={({ pressed }) => ({
+                flexDirection: "row",
+                alignItems: "center",
+                paddingVertical: verticalScale(12),
+                paddingHorizontal: horizontalScale(16),
+                backgroundColor: pressed ? theme.background : "transparent",
+                opacity: isSyncing ? 0.5 : 1,
+              })}
+            >
+              {isSyncing ? (
+                <ActivityIndicator size="small" color={theme.primary} />
+              ) : (
+                <Ionicons
+                  name="cloud-upload-outline"
+                  size={moderateScale(20)}
+                  color={theme.primary}
+                />
+              )}
+              <Text
+                style={{
+                  color: theme.primary,
+                  fontSize: moderateScale(15),
+                  marginLeft: horizontalScale(12),
+                }}
+              >
+                {isSyncing ? "Syncing..." : "Sync to Server"}
+              </Text>
+            </Pressable>
 
             {/* Divider */}
             <View
