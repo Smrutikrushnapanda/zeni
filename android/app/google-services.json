@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "144446056676",
+    "project_id": "zeni-17b45",
+    "storage_bucket": "zeni-17b45.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:144446056676:android:8eff5f79c2280925b5a4f1",
+        "android_client_info": {
+          "package_name": "com.smrutipanchsoft.zeni"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "144446056676-j4segjbpbuahb64n7k7kik2keqh8a5t2.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBxFjVXOjixcCdgPQc374kqZ26Y79iw74I"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "144446056676-j4segjbpbuahb64n7k7kik2keqh8a5t2.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,5 +1,7 @@
+// app/(drawer)/index.tsx
 import { Message, useChatStore } from "@/store/chat.store";
 import { useThemeStore } from "@/store/theme.store";
+import { useAuthStore } from "@/store/authStore";
 import {
   horizontalScale,
   moderateScale,
@@ -20,10 +22,13 @@ import {
 } from "react-native";
 import { FormattedMessage } from "@/components/chat/FormattedMessage";
 import { sendChatMessage } from "@/app/services/api.service";
+import { useRouter } from "expo-router";
 
 export default function ChatScreen() {
   const { theme } = useThemeStore();
   const { getActiveChat, addMessage, activeChat } = useChatStore();
+  const { user, isGuest } = useAuthStore();
+  const router = useRouter();
   const flatListRef = useRef<FlatList>(null);
   const typingTimeout = useRef<NodeJS.Timeout | null>(null);
 
@@ -36,6 +41,28 @@ export default function ChatScreen() {
   const [typingText, setTypingText] = useState("");
   const [displayText, setDisplayText] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+
+  // Get user's first name
+  const getUserName = () => {
+    if (isGuest) return null;
+    return user?.displayName?.split(' ')[0] || null;
+  };
+
+  // Get time-based greeting
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    const name = getUserName();
+    
+    if (hour < 12) {
+      return name ? `Good morning, ${name}` : "Good morning";
+    } else if (hour < 17) {
+      return name ? `Good afternoon, ${name}` : "Good afternoon";
+    } else if (hour < 21) {
+      return name ? `Good evening, ${name}` : "Good evening";
+    } else {
+      return name ? `Hello, ${name}` : "Hello";
+    }
+  };
 
   // ================= SCROLL =================
   useEffect(() => {
@@ -177,6 +204,7 @@ export default function ChatScreen() {
           color={theme.mutedText}
           style={{ opacity: 0.3, marginBottom: verticalScale(16) }}
         />
+        
         <Text
           style={{
             color: theme.text,
@@ -186,18 +214,51 @@ export default function ChatScreen() {
             textAlign: "center",
           }}
         >
-          Welcome to Zeni AI
+          {getGreeting()}
         </Text>
+        
         <Text
           style={{
             color: theme.mutedText,
             fontSize: moderateScale(16),
             textAlign: "center",
             lineHeight: verticalScale(24),
+            marginBottom: verticalScale(24),
           }}
         >
-          Ask me anything! I'm here to help with your questions, tasks, and conversations.
+          How can I help you today?
         </Text>
+
+        {isGuest && (
+          <Pressable
+            onPress={() => router.push('/auth/LoginScreen')}
+            style={({ pressed }) => ({
+              backgroundColor: theme.primary,
+              paddingHorizontal: horizontalScale(24),
+              paddingVertical: verticalScale(12),
+              borderRadius: moderateScale(24),
+              flexDirection: "row",
+              alignItems: "center",
+              opacity: pressed ? 0.8 : 1,
+            })}
+          >
+            <Ionicons
+              name="log-in-outline"
+              size={moderateScale(20)}
+              color="#FFFFFF"
+              style={{ marginRight: horizontalScale(8) }}
+            />
+            <Text
+              style={{
+                color: "#FFFFFF",
+                fontSize: moderateScale(16),
+                fontWeight: "600",
+              }}
+            >
+              Sign in to save your chats
+            </Text>
+          </Pressable>
+        )}
       </View>
     );
   };

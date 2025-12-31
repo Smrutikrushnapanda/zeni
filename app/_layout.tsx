@@ -1,3 +1,4 @@
+// app/(drawer)/_layout.tsx
 import { Drawer } from "expo-router/drawer";
 import { StatusBar } from "expo-status-bar";
 import {
@@ -13,6 +14,8 @@ import {
   View,
   NativeModules,
   Vibration,
+  Share,
+  Modal,
 } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { Ionicons } from "@expo/vector-icons";
@@ -20,16 +23,22 @@ import { useEffect, useState, useRef } from "react";
 
 import ChatSidebar from "@/components/chat/ChatSidebar";
 import { useThemeStore } from "@/store/theme.store";
-import { moderateScale } from "@/utils/metrics";
+import { useAuthStore } from "@/store/authStore";
+import { moderateScale, horizontalScale, verticalScale } from "@/utils/metrics";
 import { useChatStore } from "@/store/chat.store";
+import { configureGoogleSignIn } from '@/app/services/auth';
+import { signOutUser } from '@/app/services/auth';
+import { router } from 'expo-router';
 
 const { OverlayModule } = NativeModules;
 
 export default function RootLayout() {
   const { mode, theme } = useThemeStore();
   const { addChat } = useChatStore();
+  const { user, isGuest, clearAuth } = useAuthStore();
   const [isStarted, setIsStarted] = useState(false);
   const [isPressing, setIsPressing] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
   
   // Animation refs
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -57,7 +66,6 @@ export default function RootLayout() {
 
     checkOverlayStatus();
 
-    // Check when app comes to foreground
     const subscription = AppState.addEventListener("change", (nextAppState) => {
       if (nextAppState === "active") {
         checkOverlayStatus();
@@ -69,7 +77,10 @@ export default function RootLayout() {
     };
   }, []);
 
-  // ✅ Listen for overlay stop events from native service
+  useEffect(() => {
+    configureGoogleSignIn();
+  }, []);
+
   useEffect(() => {
     if (Platform.OS === "android") {
       const subscription = DeviceEventEmitter.addListener(
@@ -82,6 +93,45 @@ export default function RootLayout() {
       return () => subscription.remove();
     }
   }, []);
+
+  // Handle logout
+  const handleLogout = async () => {
+    Alert.alert(
+      "Sign Out",
+      "Are you sure you want to sign out?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Sign Out",
+          style: "destructive",
+          onPress: async () => {
+            setShowMenu(false);
+            const result = await signOutUser();
+            if (result.success) {
+              clearAuth();
+              Alert.alert("Signed Out", "You have been signed out successfully");
+              router.replace('/auth/LoginScreen');
+            } else {
+              Alert.alert("Error", result.error || "Failed to sign out");
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // Handle share
+  const handleShare = async () => {
+    setShowMenu(false);
+    try {
+      await Share.share({
+        message: 'Check out Zeni AI - Your intelligent AI assistant! Download now.',
+        title: 'Zeni AI',
+      });
+    } catch (error) {
+      console.error('Error sharing:', error);
+    }
+  };
 
   // Gentle pulse animation for start button only
   useEffect(() => {
@@ -109,7 +159,6 @@ export default function RootLayout() {
     }
   }, [isStarted]);
 
-  // Wave effect on press (only for start button)
   const animateWave = () => {
     waveAnim.setValue(0);
     Animated.timing(waveAnim, {
@@ -120,7 +169,6 @@ export default function RootLayout() {
     }).start();
   };
 
-  // Press animations
   const animatePressIn = () => {
     setIsPressing(true);
     Animated.spring(scaleAnim, {
@@ -155,7 +203,6 @@ export default function RootLayout() {
     }).start();
   };
 
-  // ✅ IMPROVED TOGGLE WITH BETTER ERROR HANDLING
   const toggleStartStop = async () => {
     Vibration.vibrate(30);
     
@@ -171,7 +218,6 @@ export default function RootLayout() {
 
     try {
       if (!isStarted) {
-        // STARTING OVERLAY
         animateWave();
         
         console.log("🔍 Checking permission...");
@@ -188,7 +234,6 @@ export default function RootLayout() {
                 text: "Grant Permission",
                 onPress: async () => {
                   await OverlayModule.requestOverlayPermission();
-                  // Wait 2 seconds after user returns
                   setTimeout(async () => {
                     try {
                       const recheckPermission = await OverlayModule.checkOverlayPermission();
@@ -213,13 +258,11 @@ export default function RootLayout() {
           return;
         }
         
-        // Permission already granted, start overlay
         console.log("🚀 Starting overlay...");
         await OverlayModule.startOverlay();
         setIsStarted(true);
         console.log("✅ Overlay should be visible now");
         
-        // Double check if it's running
         setTimeout(async () => {
           try {
             const running = await OverlayModule.isOverlayRunning();
@@ -234,19 +277,16 @@ export default function RootLayout() {
         }, 500);
         
       } else {
-        // STOPPING OVERLAY
         console.log("🛑 Stopping overlay...");
         
         try {
           await OverlayModule.stopOverlay();
-          // Wait a bit before updating state
           setTimeout(() => {
             setIsStarted(false);
             console.log("✅ Overlay stopped");
           }, 300);
         } catch (error) {
           console.error("❌ Error stopping overlay:", error);
-          // Still set to false even if there was an error
           setIsStarted(false);
           Alert.alert("Note", "Overlay stopped but there was a minor error. You can restart if needed.");
         }
@@ -254,12 +294,10 @@ export default function RootLayout() {
     } catch (e: any) {
       console.error("❌ Error in toggle:", e);
       Alert.alert("Error", e?.message || "Failed to toggle overlay");
-      // Reset state on error
       setIsStarted(false);
     }
   };
 
-  // Wave animation interpolation
   const waveScale = waveAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [1, 1.4],
@@ -270,7 +308,6 @@ export default function RootLayout() {
     outputRange: [0.4, 0.2, 0],
   });
 
-  // Glow animation interpolation
   const glowScale = glowAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [1, 1.1],
@@ -281,7 +318,6 @@ export default function RootLayout() {
     outputRange: [0, 0.4],
   });
 
-  // Button colors based on state
   const buttonColors = {
     start: {
       background: mode === 'dark' 
@@ -343,7 +379,6 @@ export default function RootLayout() {
                 overflow: 'hidden',
               }}
             >
-              {/* Wave effect (only on start) */}
               {!isStarted && (
                 <Animated.View
                   style={{
@@ -360,7 +395,6 @@ export default function RootLayout() {
                 />
               )}
 
-              {/* Glow ring (only on start) */}
               {!isStarted && (
                 <Animated.View
                   style={{
@@ -378,7 +412,6 @@ export default function RootLayout() {
                 />
               )}
 
-              {/* Button background */}
               <View
                 style={{
                   position: 'absolute',
@@ -393,7 +426,6 @@ export default function RootLayout() {
                 }}
               />
 
-              {/* Press overlay */}
               {isPressing && (
                 <View
                   style={{
@@ -408,7 +440,6 @@ export default function RootLayout() {
                 />
               )}
 
-              {/* Button content */}
               <Animated.View
                 style={{
                   transform: [{ scale: isStarted ? 1 : pulseAnim }],
@@ -418,7 +449,6 @@ export default function RootLayout() {
                   gap: moderateScale(10),
                 }}
               >
-                {/* Animated icon */}
                 <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
                   <Ionicons
                     name={isStarted ? "pause-circle" : "play-circle"}
@@ -427,7 +457,6 @@ export default function RootLayout() {
                   />
                 </Animated.View>
                 
-                {/* Status text */}
                 <Text
                   style={{
                     color: colors.text,
@@ -439,7 +468,6 @@ export default function RootLayout() {
                   {isStarted ? "STOP" : "START"}
                 </Text>
                 
-                {/* Status indicator */}
                 <View
                   style={{
                     width: moderateScale(8),
@@ -478,6 +506,7 @@ export default function RootLayout() {
 
               {/* Three Dot Menu */}
               <Pressable
+                onPress={() => setShowMenu(true)}
                 style={({ pressed }) => ({
                   padding: 8,
                   opacity: pressed ? 0.5 : 1,
@@ -497,10 +526,113 @@ export default function RootLayout() {
           name="index"
           options={{
             drawerLabel: "Chat",
-            title: "Zap AI",
+            title: "Zeni AI",
           }}
         />
       </Drawer>
+
+      {/* Three-dot Menu Modal */}
+      <Modal
+        visible={showMenu}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowMenu(false)}
+      >
+        <Pressable
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          }}
+          onPress={() => setShowMenu(false)}
+        >
+          <View
+            style={{
+              position: 'absolute',
+              top: verticalScale(60),
+              right: horizontalScale(16),
+              backgroundColor: theme.surface,
+              borderRadius: moderateScale(12),
+              minWidth: horizontalScale(180),
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: 0.25,
+              shadowRadius: 8,
+              elevation: 5,
+            }}
+          >
+            {/* Share Option */}
+            <Pressable
+              onPress={handleShare}
+              style={({ pressed }) => ({
+                flexDirection: 'row',
+                alignItems: 'center',
+                paddingVertical: verticalScale(14),
+                paddingHorizontal: horizontalScale(16),
+                backgroundColor: pressed ? theme.background : 'transparent',
+                borderTopLeftRadius: moderateScale(12),
+                borderTopRightRadius: moderateScale(12),
+              })}
+            >
+              <Ionicons
+                name="share-outline"
+                size={moderateScale(20)}
+                color={theme.text}
+              />
+              <Text
+                style={{
+                  color: theme.text,
+                  fontSize: moderateScale(15),
+                  marginLeft: horizontalScale(12),
+                }}
+              >
+                Share App
+              </Text>
+            </Pressable>
+
+            {/* Divider */}
+            {!isGuest && (
+              <View
+                style={{
+                  height: 1,
+                  backgroundColor: theme.border,
+                  marginHorizontal: horizontalScale(16),
+                }}
+              />
+            )}
+
+            {/* Logout Option (only if logged in) */}
+            {!isGuest && (
+              <Pressable
+                onPress={handleLogout}
+                style={({ pressed }) => ({
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  paddingVertical: verticalScale(14),
+                  paddingHorizontal: horizontalScale(16),
+                  backgroundColor: pressed ? theme.background : 'transparent',
+                  borderBottomLeftRadius: moderateScale(12),
+                  borderBottomRightRadius: moderateScale(12),
+                })}
+              >
+                <Ionicons
+                  name="log-out-outline"
+                  size={moderateScale(20)}
+                  color="#FF6B6B"
+                />
+                <Text
+                  style={{
+                    color: "#FF6B6B",
+                    fontSize: moderateScale(15),
+                    marginLeft: horizontalScale(12),
+                  }}
+                >
+                  Sign Out
+                </Text>
+              </Pressable>
+            )}
+          </View>
+        </Pressable>
+      </Modal>
     </GestureHandlerRootView>
   );
 }

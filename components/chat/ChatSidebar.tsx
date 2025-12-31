@@ -1,5 +1,7 @@
+// components/chat/ChatSidebar.tsx
 import { useChatStore } from "@/store/chat.store";
 import { useThemeStore } from "@/store/theme.store";
+import { useAuthStore } from "@/store/authStore";
 import {
   horizontalScale,
   moderateScale,
@@ -16,11 +18,14 @@ import {
   TextInput, 
   View,
   ActivityIndicator,
-  RefreshControl
+  RefreshControl,
+  Image,
 } from "react-native";
+import { router } from 'expo-router';
 
 export default function ChatSidebar(props: any) {
   const { theme, mode, toggleTheme } = useThemeStore();
+  const { user, isGuest } = useAuthStore();
   const { 
     chats, 
     activeChat, 
@@ -39,7 +44,6 @@ export default function ChatSidebar(props: any) {
   const [showSettings, setShowSettings] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Load chats from server on mount
   useEffect(() => {
     loadChatsFromServer();
   }, []);
@@ -122,6 +126,22 @@ export default function ChatSidebar(props: any) {
     
     const diffDays = Math.floor(diffHours / 24);
     return `${diffDays}d ago`;
+  };
+
+  const getUserName = () => {
+    if (isGuest) return null;
+    return user?.displayName || user?.email || 'User';
+  };
+
+  const getUserEmail = () => {
+    if (isGuest) return null;
+    return user?.email;
+  };
+
+  const getUserInitials = () => {
+    const name = getUserName();
+    if (!name) return 'G';
+    return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
   };
 
   return (
@@ -292,7 +312,7 @@ export default function ChatSidebar(props: any) {
         })}
       </DrawerContentScrollView>
 
-      {/* Settings Section at Bottom */}
+      {/* Bottom Section */}
       <View
         style={{
           borderTopWidth: 1,
@@ -328,9 +348,17 @@ export default function ChatSidebar(props: any) {
           </View>
         )}
 
-        {/* Settings Toggle */}
+        {/* User Profile / Settings Toggle */}
         <Pressable
-          onPress={() => setShowSettings(!showSettings)}
+          onPress={() => {
+            if (isGuest) {
+              // Navigate to login
+              router.push('/auth/LoginScreen');
+            } else {
+              // Toggle settings
+              setShowSettings(!showSettings);
+            }
+          }}
           style={({ pressed }) => ({
             flexDirection: "row",
             alignItems: "center",
@@ -340,32 +368,86 @@ export default function ChatSidebar(props: any) {
             backgroundColor: pressed ? theme.surface : "transparent",
           })}
         >
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
-            <Ionicons
-              name="settings-outline"
-              size={moderateScale(22)}
-              color={theme.text}
-            />
-            <Text
-              style={{
-                color: theme.text,
-                fontSize: moderateScale(16),
-                marginLeft: horizontalScale(16),
-                fontWeight: "600",
-              }}
-            >
-              Settings
-            </Text>
+          <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+            {/* User Avatar */}
+            {!isGuest && user?.photoURL ? (
+              <Image
+                source={{ uri: user.photoURL }}
+                style={{
+                  width: moderateScale(40),
+                  height: moderateScale(40),
+                  borderRadius: moderateScale(20),
+                  backgroundColor: theme.surface,
+                }}
+              />
+            ) : (
+              <View
+                style={{
+                  width: moderateScale(40),
+                  height: moderateScale(40),
+                  borderRadius: moderateScale(20),
+                  backgroundColor: theme.primary + '20',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                }}
+              >
+                {isGuest ? (
+                  <Ionicons
+                    name="settings-outline"
+                    size={moderateScale(22)}
+                    color={theme.text}
+                  />
+                ) : (
+                  <Text
+                    style={{
+                      color: theme.primary,
+                      fontSize: moderateScale(16),
+                      fontWeight: '600',
+                    }}
+                  >
+                    {getUserInitials()}
+                  </Text>
+                )}
+              </View>
+            )}
+            
+            <View style={{ marginLeft: horizontalScale(12), flex: 1 }}>
+              <Text
+                style={{
+                  color: theme.text,
+                  fontSize: moderateScale(16),
+                  fontWeight: "600",
+                }}
+                numberOfLines={1}
+              >
+                {isGuest ? 'Settings' : getUserName()}
+              </Text>
+              {!isGuest && getUserEmail() && (
+                <Text
+                  style={{
+                    color: theme.mutedText,
+                    fontSize: moderateScale(13),
+                    marginTop: verticalScale(2),
+                  }}
+                  numberOfLines={1}
+                >
+                  {getUserEmail()}
+                </Text>
+              )}
+            </View>
           </View>
-          <Ionicons
-            name={showSettings ? "chevron-up" : "chevron-down"}
-            size={moderateScale(20)}
-            color={theme.mutedText}
-          />
+          
+          {!isGuest && (
+            <Ionicons
+              name={showSettings ? "chevron-up" : "chevron-down"}
+              size={moderateScale(20)}
+              color={theme.mutedText}
+            />
+          )}
         </Pressable>
 
-        {/* Settings Panel */}
-        {showSettings && (
+        {/* Settings Panel (only for logged-in users) */}
+        {!isGuest && showSettings && (
           <View
             style={{
               backgroundColor: theme.surface,
