@@ -4,7 +4,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // IMPORTANT: Change this to your computer's IP address
 // Find it: Windows (ipconfig), Mac (ifconfig), Linux (ip addr)
-const API_URL = "https://zeni-backend.up.railway.app"; 
+const API_URL = "https://zeni-backend-xceb.onrender.com"; 
 
 const api = axios.create({
   baseURL: API_URL,
@@ -17,7 +17,13 @@ const api = axios.create({
 // Request interceptor
 api.interceptors.request.use(
   async (config) => {
-    console.log(`📤 API Request: ${config.method?.toUpperCase()} ${config.url}`);
+    // 🔍 ADD THESE DEBUG LOGS
+    console.log(`📤 ${config.method?.toUpperCase()} ${config.url}`);
+    console.log(`🌐 BASE URL: ${config.baseURL}`);
+    console.log(`🔗 FULL URL: ${config.baseURL}${config.url}`);
+    console.log(`📦 DATA:`, config.data);
+    // END DEBUG LOGS
+    
     return config;
   },
   (error) => {
@@ -29,7 +35,7 @@ api.interceptors.request.use(
 // Response interceptor
 api.interceptors.response.use(
   (response) => {
-    console.log(`📥 API Response: ${response.status} ${response.config.url}`);
+    console.log(`📥 ${response.status} ${response.config.url}`);
     return response;
   },
   (error) => {
@@ -194,7 +200,7 @@ export const healthCheck = async () => {
 export const getAllChats = async (): Promise<UserChatsData> => {
   try {
     const userId = await getOrCreateUserId();
-    const response = await api.get(`/api/chats/${userId}`);
+    const response = await api.get(`/chats/${userId}`);
     
     if (response.data.success) {
       console.log("✅ Retrieved chats from server:", response.data.data);
@@ -217,7 +223,7 @@ export const createChat = async (
 ): Promise<Chat> => {
   try {
     const userId = await getOrCreateUserId();
-    const response = await api.post(`/api/chats/${userId}/chats`, {
+    const response = await api.post(`/chats/${userId}/chats`, {
       id,
       title,
       messages: [],
@@ -245,7 +251,7 @@ export const updateChat = async (
 ): Promise<Chat> => {
   try {
     const userId = await getOrCreateUserId();
-    const response = await api.put(`/api/chats/${userId}/chats/${chatId}`, updates);
+    const response = await api.put(`/chats/${userId}/chats/${chatId}`, updates);
     
     if (response.data.success) {
       console.log("✅ Updated chat:", response.data.data);
@@ -265,7 +271,7 @@ export const updateChat = async (
 export const deleteChat = async (chatId: string): Promise<void> => {
   try {
     const userId = await getOrCreateUserId();
-    const response = await api.delete(`/api/chats/${userId}/chats/${chatId}`);
+    const response = await api.delete(`/chats/${userId}/chats/${chatId}`);
     
     if (response.data.success) {
       console.log("✅ Deleted chat:", chatId);
@@ -284,7 +290,7 @@ export const deleteChat = async (chatId: string): Promise<void> => {
 export const clearAllChats = async (): Promise<void> => {
   try {
     const userId = await getOrCreateUserId();
-    const response = await api.delete(`/api/chats/${userId}/chats`);
+    const response = await api.delete(`/chats/${userId}/chats`);
     
     if (response.data.success) {
       console.log("✅ Cleared all chats");
@@ -303,7 +309,7 @@ export const clearAllChats = async (): Promise<void> => {
 export const setActiveChat = async (chatId: string | null): Promise<void> => {
   try {
     const userId = await getOrCreateUserId();
-    const response = await api.put(`/api/chats/${userId}/active-chat`, { chatId });
+    const response = await api.put(`/chats/${userId}/active-chat`, { chatId });
     
     if (response.data.success) {
       console.log("✅ Set active chat:", chatId);
@@ -326,7 +332,7 @@ export const addMessageToChat = async (
   try {
     const userId = await getOrCreateUserId();
     const response = await api.post(
-      `/api/chats/${userId}/chats/${chatId}/messages`,
+      `/chats/${userId}/chats/${chatId}/messages`,
       { message }
     );
     
@@ -376,6 +382,5 @@ export const syncLocalChatsToServer = async (
     throw new Error(error.response?.data?.error || "Failed to sync chats");
   }
 };
-
 
 export default api;

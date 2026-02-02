@@ -18,8 +18,8 @@ import java.util.concurrent.Executors;
 public class AIApiClient {
     private static final String TAG = "AIApiClient";
     
-    // ✅ Railway Backend URL
-    private static final String BASE_URL = "https://zeni-backend.up.railway.app";
+    // ✅ CORRECTED - Render Backend URL
+    private static final String BASE_URL = "https://zeni-backend-xceb.onrender.com";
     
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -50,6 +50,7 @@ public class AIApiClient {
             HttpURLConnection conn = null;
             try {
                 Log.d(TAG, "📤 Sending message: " + message);
+                Log.d(TAG, "🔗 Backend URL: " + BASE_URL);
                 
                 // Create URL
                 URL url = new URL(BASE_URL + "/chat");
@@ -59,13 +60,15 @@ public class AIApiClient {
                 conn.setRequestMethod("POST");
                 conn.setRequestProperty("Content-Type", "application/json");
                 conn.setDoOutput(true);
-                conn.setConnectTimeout(10000); // 10 seconds
+                conn.setConnectTimeout(15000); // 15 seconds
                 conn.setReadTimeout(30000); // 30 seconds
                 
                 // Create JSON request
                 JSONObject json = new JSONObject();
                 json.put("message", message);
                 json.put("sessionId", sessionId);
+                
+                Log.d(TAG, "📦 Request payload: " + json.toString());
                 
                 // Send request
                 OutputStream os = conn.getOutputStream();
@@ -78,7 +81,19 @@ public class AIApiClient {
                 Log.d(TAG, "📥 Response code: " + responseCode);
                 
                 if (responseCode != 200) {
-                    throw new Exception("HTTP Error: " + responseCode);
+                    // Read error response
+                    BufferedReader errorReader = new BufferedReader(
+                        new InputStreamReader(conn.getErrorStream(), "UTF-8")
+                    );
+                    StringBuilder errorResponse = new StringBuilder();
+                    String line;
+                    while ((line = errorReader.readLine()) != null) {
+                        errorResponse.append(line);
+                    }
+                    errorReader.close();
+                    
+                    Log.e(TAG, "❌ Error response: " + errorResponse.toString());
+                    throw new Exception("HTTP Error " + responseCode + ": " + errorResponse.toString());
                 }
                 
                 // Read response
@@ -92,17 +107,20 @@ public class AIApiClient {
                 }
                 br.close();
                 
+                Log.d(TAG, "📄 Raw response: " + response.toString());
+                
                 // Parse response
                 JSONObject jsonResponse = new JSONObject(response.toString());
                 String aiMessage = jsonResponse.getString("reply");
                 
-                Log.d(TAG, "✅ AI Response received");
+                Log.d(TAG, "✅ AI Response received: " + aiMessage.substring(0, Math.min(50, aiMessage.length())));
                 
                 // Return on main thread
                 mainHandler.post(() -> callback.onSuccess(aiMessage));
                 
             } catch (Exception e) {
                 Log.e(TAG, "❌ Error calling AI API", e);
+                e.printStackTrace();
                 mainHandler.post(() -> 
                     callback.onError("Connection failed: " + e.getMessage())
                 );
@@ -121,15 +139,16 @@ public class AIApiClient {
         executor.execute(() -> {
             HttpURLConnection conn = null;
             try {
-                Log.d(TAG, "🏓 Ping backend...");
+                Log.d(TAG, "🏓 Ping backend: " + BASE_URL);
                 
                 URL url = new URL(BASE_URL + "/");
                 conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestMethod("GET");
-                conn.setConnectTimeout(5000);
-                conn.setReadTimeout(5000);
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(10000);
                 
                 int responseCode = conn.getResponseCode();
+                Log.d(TAG, "📊 Ping response code: " + responseCode);
                 
                 if (responseCode == 200) {
                     BufferedReader br = new BufferedReader(
@@ -156,6 +175,7 @@ public class AIApiClient {
                 
             } catch (Exception e) {
                 Log.e(TAG, "❌ Ping failed", e);
+                e.printStackTrace();
                 mainHandler.post(() -> 
                     callback.onError("Cannot reach backend at " + BASE_URL)
                 );
@@ -171,13 +191,13 @@ public class AIApiClient {
         executor.execute(() -> {
             HttpURLConnection conn = null;
             try {
-                Log.d(TAG, "🏥 Health check...");
+                Log.d(TAG, "🏥 Health check: " + BASE_URL);
                 
                 URL url = new URL(BASE_URL + "/");
                 conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestMethod("GET");
-                conn.setConnectTimeout(5000);
-                conn.setReadTimeout(5000);
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(10000);
                 
                 int responseCode = conn.getResponseCode();
                 
@@ -207,6 +227,7 @@ public class AIApiClient {
                 
             } catch (Exception e) {
                 Log.e(TAG, "❌ Health check failed", e);
+                e.printStackTrace();
                 mainHandler.post(() -> 
                     callback.onError("Cannot reach backend at " + BASE_URL)
                 );
@@ -227,22 +248,13 @@ public class AIApiClient {
             try {
                 Log.d(TAG, "🗑️ Clearing conversation...");
                 
-                URL url = new URL(BASE_URL + "/clear");
+                // ✅ FIXED - Use correct endpoint
+                URL url = new URL(BASE_URL + "/conversation/" + sessionId);
                 conn = (HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("POST");
+                conn.setRequestMethod("DELETE");
                 conn.setRequestProperty("Content-Type", "application/json");
-                conn.setDoOutput(true);
-                conn.setConnectTimeout(5000);
-                conn.setReadTimeout(5000);
-                
-                // Send session ID
-                JSONObject json = new JSONObject();
-                json.put("sessionId", sessionId);
-                
-                OutputStream os = conn.getOutputStream();
-                os.write(json.toString().getBytes("UTF-8"));
-                os.flush();
-                os.close();
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(10000);
                 
                 int responseCode = conn.getResponseCode();
                 
@@ -258,6 +270,7 @@ public class AIApiClient {
                 
             } catch (Exception e) {
                 Log.e(TAG, "❌ Error clearing conversation", e);
+                e.printStackTrace();
                 mainHandler.post(() -> 
                     callback.onError("Error: " + e.getMessage())
                 );

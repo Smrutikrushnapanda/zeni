@@ -1,7 +1,10 @@
 // components/chat/FormattedMessage.tsx
-import React from "react";
-import { Text, View } from "react-native";
-import { moderateScale, verticalScale } from "@/utils/metrics";
+import React, { useState } from "react";
+import { Text, View, Pressable, ScrollView, Alert, Platform } from "react-native";
+import { moderateScale, verticalScale, horizontalScale } from "@/utils/metrics";
+import { Ionicons } from "@expo/vector-icons";
+import * as Clipboard from 'expo-clipboard';
+import { useThemeStore } from "@/store/theme.store";
 
 interface FormattedMessageProps {
   text: string;
@@ -9,9 +12,155 @@ interface FormattedMessageProps {
 }
 
 export const FormattedMessage: React.FC<FormattedMessageProps> = ({ text, color }) => {
-  // Parse and format the message
+  const { theme, mode } = useThemeStore();
+
+  // Parse message into text and code blocks
   const parseMessage = (message: string) => {
-    const lines = message.split('\n');
+    const parts: Array<{ type: "text" | "code"; content: string; language?: string }> = [];
+    
+    // Match code blocks: ```language\ncode\n```
+    const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
+    let lastIndex = 0;
+    let match;
+
+    while ((match = codeBlockRegex.exec(message)) !== null) {
+      // Add text before code block
+      if (match.index > lastIndex) {
+        const textContent = message.substring(lastIndex, match.index);
+        if (textContent.trim()) {
+          parts.push({ type: "text", content: textContent });
+        }
+      }
+
+      // Add code block
+      parts.push({
+        type: "code",
+        content: match[2].trim(),
+        language: match[1] || "code",
+      });
+
+      lastIndex = match.index + match[0].length;
+    }
+
+    // Add remaining text
+    if (lastIndex < message.length) {
+      const textContent = message.substring(lastIndex);
+      if (textContent.trim()) {
+        parts.push({ type: "text", content: textContent });
+      }
+    }
+
+    // If no code blocks found, return the whole message as text
+    if (parts.length === 0) {
+      parts.push({ type: "text", content: message });
+    }
+
+    return parts;
+  };
+
+  // Copy to clipboard
+  const copyToClipboard = async (text: string, label: string = "Text") => {
+    await Clipboard.setStringAsync(text);
+    Alert.alert("✅ Copied!", `${label} copied to clipboard`);
+  };
+
+  // Render code block with copy button
+  const CodeBlock = ({ code, language }: { code: string; language: string }) => {
+    const [copied, setCopied] = useState(false);
+
+    const handleCopy = async () => {
+      await copyToClipboard(code, "Code");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    };
+
+    return (
+      <View
+        style={{
+          backgroundColor: mode === "dark" ? "#1E1E1E" : "#F6F8FA",
+          borderRadius: moderateScale(8),
+          overflow: "hidden",
+          marginVertical: verticalScale(8),
+          borderWidth: 1,
+          borderColor: mode === "dark" ? "#3D3D3D" : "#E1E4E8",
+        }}
+      >
+        {/* Code Header */}
+        <View
+          style={{
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+            paddingHorizontal: horizontalScale(12),
+            paddingVertical: verticalScale(8),
+            backgroundColor: mode === "dark" ? "#2D2D2D" : "#E1E4E8",
+          }}
+        >
+          <Text
+            style={{
+              fontSize: moderateScale(12),
+              fontWeight: "600",
+              color: mode === "dark" ? "#C9D1D9" : "#586069",
+              textTransform: "lowercase",
+            }}
+          >
+            {language}
+          </Text>
+          
+          <Pressable
+            onPress={handleCopy}
+            style={({ pressed }) => ({
+              flexDirection: "row",
+              alignItems: "center",
+              gap: horizontalScale(4),
+              paddingHorizontal: horizontalScale(8),
+              paddingVertical: verticalScale(4),
+              borderRadius: moderateScale(4),
+              opacity: pressed ? 0.5 : 1,
+            })}
+          >
+            <Ionicons
+              name={copied ? "checkmark" : "copy-outline"}
+              size={moderateScale(16)}
+              color={mode === "dark" ? "#C9D1D9" : "#586069"}
+            />
+            <Text
+              style={{
+                fontSize: moderateScale(12),
+                fontWeight: "500",
+                color: mode === "dark" ? "#C9D1D9" : "#586069",
+              }}
+            >
+              {copied ? "Copied!" : "Copy code"}
+            </Text>
+          </Pressable>
+        </View>
+
+        {/* Code Content */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={{ maxHeight: verticalScale(300) }}
+        >
+          <Text
+            style={{
+              fontSize: moderateScale(13),
+              lineHeight: verticalScale(20),
+              padding: moderateScale(12),
+              fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+              color: mode === "dark" ? "#C9D1D9" : "#24292E",
+            }}
+          >
+            {code}
+          </Text>
+        </ScrollView>
+      </View>
+    );
+  };
+
+  // Parse and format regular text
+  const formatTextContent = (text: string) => {
+    const lines = text.split('\n');
     const elements: JSX.Element[] = [];
     let key = 0;
 
@@ -159,5 +308,27 @@ export const FormattedMessage: React.FC<FormattedMessageProps> = ({ text, color 
     return elements;
   };
 
-  return <View>{parseMessage(text)}</View>;
+  const parts = parseMessage(text);
+
+  return (
+    <View>
+      {parts.map((part, index) => {
+        if (part.type === "code") {
+          return (
+            <CodeBlock
+              key={`code-${index}`}
+              code={part.content}
+              language={part.language || "code"}
+            />
+          );
+        } else {
+          return (
+            <View key={`text-${index}`}>
+              {formatTextContent(part.content)}
+            </View>
+          );
+        }
+      })}
+    </View>
+  );
 };

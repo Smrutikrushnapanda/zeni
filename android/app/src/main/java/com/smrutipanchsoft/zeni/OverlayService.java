@@ -5,6 +5,8 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
@@ -76,7 +78,6 @@ public class OverlayService extends Service {
     
     private boolean isExpanded = false;
     
-    // ✅ Window resize variables
     private View resizeHandle;
     private boolean isResizing = false;
     private float resizeInitialTouchX, resizeInitialTouchY;
@@ -146,7 +147,7 @@ public class OverlayService extends Service {
         }
     }
 
-    // Chat Adapter
+    // Chat Adapter with COPY FUNCTIONALITY
     private class ChatAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         private static final int TYPE_USER = 1;
         private static final int TYPE_AI = 2;
@@ -190,6 +191,7 @@ public class OverlayService extends Service {
             return messages.size();
         }
 
+        // USER MESSAGE VIEW HOLDER WITH COPY
         class UserMessageViewHolder extends RecyclerView.ViewHolder {
             TextView messageText, timeText;
             LinearLayout messageBubble;
@@ -199,6 +201,26 @@ public class OverlayService extends Service {
                 messageText = itemView.findViewById(R.id.messageText);
                 timeText = itemView.findViewById(R.id.timeText);
                 messageBubble = itemView.findViewById(R.id.messageBubble);
+                
+                // ✅ Setup long press to copy
+                messageBubble.setOnLongClickListener(v -> {
+                    copyToClipboard(messageText.getText().toString());
+                    return true;
+                });
+                
+                // ✅ Visual feedback on press
+                messageBubble.setOnTouchListener((v, event) -> {
+                    switch (event.getAction()) {
+                        case MotionEvent.ACTION_DOWN:
+                            messageBubble.setAlpha(0.7f);
+                            break;
+                        case MotionEvent.ACTION_UP:
+                        case MotionEvent.ACTION_CANCEL:
+                            messageBubble.setAlpha(1f);
+                            break;
+                    }
+                    return false;
+                });
             }
 
             void bind(ChatMessage message) {
@@ -207,6 +229,7 @@ public class OverlayService extends Service {
             }
         }
 
+        // AI MESSAGE VIEW HOLDER WITH COPY
         class AIMessageViewHolder extends RecyclerView.ViewHolder {
             TextView messageText, timeText;
             LinearLayout messageBubble;
@@ -218,12 +241,54 @@ public class OverlayService extends Service {
                 timeText = itemView.findViewById(R.id.timeText);
                 messageBubble = itemView.findViewById(R.id.messageBubble);
                 aiAvatar = itemView.findViewById(R.id.aiAvatar);
+                
+                // ✅ Setup long press to copy (removes HTML formatting)
+                messageBubble.setOnLongClickListener(v -> {
+                    // Remove HTML formatting when copying
+                    String plainText = Html.fromHtml(messageText.getText().toString()).toString();
+                    copyToClipboard(plainText);
+                    return true;
+                });
+                
+                // ✅ Visual feedback on press
+                messageBubble.setOnTouchListener((v, event) -> {
+                    switch (event.getAction()) {
+                        case MotionEvent.ACTION_DOWN:
+                            messageBubble.setAlpha(0.7f);
+                            break;
+                        case MotionEvent.ACTION_UP:
+                        case MotionEvent.ACTION_CANCEL:
+                            messageBubble.setAlpha(1f);
+                            break;
+                    }
+                    return false;
+                });
             }
 
             void bind(ChatMessage message) {
                 messageText.setText(Html.fromHtml(message.message));
                 timeText.setText(message.timestamp);
             }
+        }
+    }
+
+    // ✅ COPY TO CLIPBOARD HELPER METHOD
+    private void copyToClipboard(String text) {
+        try {
+            ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            ClipData clip = ClipData.newPlainText("AI Message", text);
+            clipboard.setPrimaryClip(clip);
+            
+            handler.post(() -> {
+                Toast.makeText(this, "📋 Copied to clipboard", Toast.LENGTH_SHORT).show();
+            });
+            
+            Log.d(TAG, "✅ Text copied: " + text.substring(0, Math.min(50, text.length())) + "...");
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error copying to clipboard", e);
+            handler.post(() -> {
+                Toast.makeText(this, "❌ Failed to copy", Toast.LENGTH_SHORT).show();
+            });
         }
     }
 
@@ -282,7 +347,6 @@ public class OverlayService extends Service {
         buttonContainer = new FrameLayout(this);
         floatingButton = new ImageView(this);
         
-        // Gray circular background for button
         GradientDrawable buttonBg = new GradientDrawable();
         buttonBg.setColor(Color.parseColor("#808080"));
         buttonBg.setShape(GradientDrawable.OVAL);
@@ -291,7 +355,6 @@ public class OverlayService extends Service {
         floatingButton.setImageResource(R.drawable.ic_send);
         floatingButton.setColorFilter(Color.WHITE);
         
-        // ✅ Made even smaller - 40dp instead of 50dp
         buttonSize = (int) (40 * getResources().getDisplayMetrics().density);
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(buttonSize, buttonSize);
         floatingButton.setLayoutParams(params);
@@ -371,7 +434,6 @@ public class OverlayService extends Service {
     private void createCompactChat() {
         float dp = getResources().getDisplayMetrics().density;
         
-        // ========== MAIN CONTAINER ==========
         spotlightView = new LinearLayout(this);
         spotlightView.setOrientation(LinearLayout.VERTICAL);
         
@@ -391,24 +453,17 @@ public class OverlayService extends Service {
         spotlightView.setLayoutParams(new LinearLayout.LayoutParams(width, ViewGroup.LayoutParams.WRAP_CONTENT));
         spotlightView.setPadding((int)(12*dp), (int)(8*dp), (int)(12*dp), (int)(12*dp));
 
-        // ========== HEADER (with macOS-style buttons) ==========
         LinearLayout headerRow = new LinearLayout(this);
         headerRow.setOrientation(LinearLayout.HORIZONTAL);
         headerRow.setGravity(Gravity.CENTER_VERTICAL);
         headerRow.setPadding((int)(4*dp), (int)(4*dp), (int)(4*dp), (int)(8*dp));
         
-        // ✅ macOS-style button container
         LinearLayout macButtonsContainer = new LinearLayout(this);
         macButtonsContainer.setOrientation(LinearLayout.HORIZONTAL);
         macButtonsContainer.setGravity(Gravity.CENTER_VERTICAL);
         
-        // Close button (Red)
         btnClose = createMacButton(Color.parseColor("#FF5F56"));
-        
-        // Minimize button (Yellow)
         btnMinimize = createMacButton(Color.parseColor("#FFBD2E"));
-        
-        // Maximize button (Green)
         btnMaximize = createMacButton(Color.parseColor("#27C93F"));
         
         LinearLayout.LayoutParams macBtnParams = new LinearLayout.LayoutParams((int)(12*dp), (int)(12*dp));
@@ -430,7 +485,6 @@ public class OverlayService extends Service {
         headerRow.addView(macButtonsContainer);
         headerRow.addView(headerTitle);
 
-        // ========== CHAT CONTAINER ==========
         chatContainer = new LinearLayout(this);
         chatContainer.setOrientation(LinearLayout.VERTICAL);
         chatContainer.setVisibility(View.GONE);
@@ -447,7 +501,6 @@ public class OverlayService extends Service {
         chatParams.setMargins(0, 0, 0, (int)(12*dp));
         chatRecyclerView.setLayoutParams(chatParams);
 
-        // Typing Indicator
         typingIndicatorContainer = new LinearLayout(this);
         typingIndicatorContainer.setOrientation(LinearLayout.HORIZONTAL);
         typingIndicatorContainer.setGravity(Gravity.CENTER_VERTICAL);
@@ -483,7 +536,6 @@ public class OverlayService extends Service {
         chatContainer.addView(chatRecyclerView);
         chatContainer.addView(typingIndicatorContainer);
 
-        // ========== INPUT CONTAINER ==========
         LinearLayout inputContainer = new LinearLayout(this);
         inputContainer.setOrientation(LinearLayout.HORIZONTAL);
         inputContainer.setGravity(Gravity.CENTER_VERTICAL);
@@ -528,7 +580,6 @@ public class OverlayService extends Service {
         inputContainer.addView(searchInput);
         inputContainer.addView(btnSend);
 
-        // ========== RESIZE HANDLE ==========
         resizeHandle = new View(this);
         GradientDrawable resizeHandleBg = new GradientDrawable();
         resizeHandleBg.setColor(Color.parseColor("#40000000"));
@@ -543,13 +594,11 @@ public class OverlayService extends Service {
         resizeParams.topMargin = (int)(8*dp);
         resizeHandle.setLayoutParams(resizeParams);
 
-        // ========== ASSEMBLE VIEW ==========
         spotlightView.addView(headerRow);
         spotlightView.addView(chatContainer);
         spotlightView.addView(inputContainer);
         spotlightView.addView(resizeHandle);
 
-        // ========== WINDOW PARAMS ==========
         int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                 ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                 : WindowManager.LayoutParams.TYPE_PHONE;
@@ -567,7 +616,6 @@ public class OverlayService extends Service {
         spotlightParams.x = 30;
         spotlightParams.y = 150;
 
-        // ========== SETUP TOUCH LISTENERS ==========
         setupHeaderDragging(headerRow);
         setupResizeHandle();
         setupMacButtons();
@@ -587,7 +635,6 @@ public class OverlayService extends Service {
         });
     }
 
-    // ✅ Create macOS-style circular button
     private View createMacButton(int color) {
         View button = new View(this);
         GradientDrawable bg = new GradientDrawable();
@@ -598,9 +645,7 @@ public class OverlayService extends Service {
         return button;
     }
 
-    // ✅ Setup macOS button actions
     private void setupMacButtons() {
-        // Close button - closes chat completely
         btnClose.setOnClickListener(v -> {
             v.animate().scaleX(0.8f).scaleY(0.8f).setDuration(100)
                 .withEndAction(() -> {
@@ -610,7 +655,6 @@ public class OverlayService extends Service {
                 .start();
         });
         
-        // Minimize button - hides chat but keeps data
         btnMinimize.setOnClickListener(v -> {
             v.animate().scaleX(0.8f).scaleY(0.8f).setDuration(100)
                 .withEndAction(() -> {
@@ -620,7 +664,6 @@ public class OverlayService extends Service {
                 .start();
         });
         
-        // Maximize button - opens in-app chat with same data
         btnMaximize.setOnClickListener(v -> {
             v.animate().scaleX(0.8f).scaleY(0.8f).setDuration(100)
                 .withEndAction(() -> {
@@ -631,7 +674,6 @@ public class OverlayService extends Service {
         });
     }
 
-    // ✅ Minimize - hide chat window but keep conversation data
     private void minimizeChat() {
         try {
             if (isSpotlightVisible && spotlightView != null) {
@@ -649,7 +691,6 @@ public class OverlayService extends Service {
                         windowManager.removeView(spotlightView);
                         isSpotlightVisible = false;
                         searchInput.setText("");
-                        // ✅ DON'T clear chat messages - keep conversation data
                     })
                     .start();
                 
@@ -660,14 +701,11 @@ public class OverlayService extends Service {
         }
     }
 
-    // ✅ Maximize - open in-app chat with same conversation
     private void maximizeToApp() {
         try {
-            // Create intent to open MainActivity
             Intent intent = new Intent(this, MainActivity.class);
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
             
-            // ✅ Pass conversation data to app
             ArrayList<String> messages = new ArrayList<>();
             ArrayList<Boolean> isUserList = new ArrayList<>();
             ArrayList<String> timestamps = new ArrayList<>();
@@ -683,8 +721,6 @@ public class OverlayService extends Service {
             intent.putStringArrayListExtra("timestamps", timestamps);
             
             startActivity(intent);
-            
-            // Minimize overlay after opening app
             minimizeChat();
             
             Toast.makeText(this, "Opening in app...", Toast.LENGTH_SHORT).show();
@@ -694,7 +730,6 @@ public class OverlayService extends Service {
         }
     }
 
-    // ✅ Setup header dragging
     private void setupHeaderDragging(LinearLayout headerRow) {
         headerRow.setOnTouchListener(new View.OnTouchListener() {
             private float initialTouchX, initialTouchY;
@@ -748,7 +783,6 @@ public class OverlayService extends Service {
         });
     }
 
-    // ✅ Setup resize handle for expandable window
     private void setupResizeHandle() {
         resizeHandle.setOnTouchListener(new View.OnTouchListener() {
             @Override
@@ -767,17 +801,13 @@ public class OverlayService extends Service {
                             float dx = event.getRawX() - resizeInitialTouchX;
                             float dy = event.getRawY() - resizeInitialTouchY;
                             
-                            // Calculate new dimensions
                             int newWidth = (int) (resizeInitialWidth + dx);
                             int newHeight = (int) (resizeInitialHeight + dy);
                             
-                            // Apply constraints
                             newWidth = Math.max(minWidth, Math.min(newWidth, maxWidth));
                             
-                            // Update width
                             spotlightParams.width = newWidth;
                             
-                            // Update RecyclerView height if chat is expanded
                             if (isExpanded && chatRecyclerView != null) {
                                 newHeight = Math.max(minHeight, Math.min(newHeight, maxHeight));
                                 ViewGroup.LayoutParams chatParams = chatRecyclerView.getLayoutParams();
@@ -957,7 +987,6 @@ public class OverlayService extends Service {
                         isSpotlightVisible = false;
                         searchInput.setText("");
                         
-                        // Reset to compact state and clear conversation
                         chatContainer.setVisibility(View.GONE);
                         isExpanded = false;
                         chatMessages.clear();

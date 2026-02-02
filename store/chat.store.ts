@@ -32,7 +32,7 @@ interface ChatStore {
   addMessage: (chatId: string, message: Omit<Message, "id">) => Promise<void>;
   updateChatTitle: (chatId: string, title: string) => Promise<void>;
 
-  // 🔥 FIX
+  // Getters
   getActiveChat: () => Chat | null;
   getActiveMessages: () => Message[];
 
@@ -52,12 +52,32 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     try {
       const data = await api.getAllChats();
 
-      set({
-        chats: data.chats,
-        activeChat: data.activeChat,
-        lastSyncTime: new Date().toISOString(),
-        isLoading: false,
-      });
+      // ✅ FIX: If no chats exist on server, create one
+      if (data.chats.length === 0) {
+        console.log("📝 No chats found, creating default chat");
+        const newChatId = `chat_${Date.now()}`;
+        await api.createChat(newChatId, "New Chat");
+        
+        set({
+          chats: [{
+            id: newChatId,
+            title: "New Chat",
+            messages: [],
+            createdAt: new Date().toISOString(),
+          }],
+          activeChat: newChatId,
+          lastSyncTime: new Date().toISOString(),
+          isLoading: false,
+        });
+      } else {
+        // ✅ FIX: If no active chat, use first chat
+        set({
+          chats: data.chats,
+          activeChat: data.activeChat || data.chats[0].id,
+          lastSyncTime: new Date().toISOString(),
+          isLoading: false,
+        });
+      }
     } catch (error) {
       console.error("❌ Server failed, using local storage");
 
@@ -65,12 +85,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const localActiveChat = await AsyncStorage.getItem("activeChat");
 
       if (localChats) {
+        const parsedChats = JSON.parse(localChats);
         set({
-          chats: JSON.parse(localChats),
-          activeChat: localActiveChat,
+          chats: parsedChats,
+          activeChat: localActiveChat || parsedChats[0]?.id || null,
           isLoading: false,
         });
       } else {
+        // ✅ FIX: Create default chat if nothing in local storage
         const defaultChat: Chat = {
           id: `chat_${Date.now()}`,
           title: "New Chat",
@@ -94,7 +116,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
     try {
       await api.createChat(id, title);
-    } catch {}
+    } catch (error) {
+      console.error("❌ Failed to create chat on server:", error);
+    }
 
     set((state) => ({
       chats: [
@@ -108,11 +132,16 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   // ================= DELETE CHAT =================
   deleteChat: async (id) => {
     const state = get();
-    if (state.chats.length <= 1) return;
+    if (state.chats.length <= 1) {
+      console.log("❌ Cannot delete last chat");
+      return;
+    }
 
     try {
       await api.deleteChat(id);
-    } catch {}
+    } catch (error) {
+      console.error("❌ Failed to delete chat on server:", error);
+    }
 
     const updated = state.chats.filter((c) => c.id !== id);
     set({
@@ -125,7 +154,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   clearAllChats: async () => {
     try {
       await api.clearAllChats();
-    } catch {}
+    } catch (error) {
+      console.error("❌ Failed to clear chats on server:", error);
+    }
 
     const chat: Chat = {
       id: `chat_${Date.now()}`,
@@ -141,7 +172,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   setActiveChat: async (id) => {
     try {
       await api.setActiveChat(id);
-    } catch {}
+    } catch (error) {
+      console.error("❌ Failed to set active chat on server:", error);
+    }
 
     set({ activeChat: id });
   },
@@ -150,7 +183,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   addMessage: async (chatId, message) => {
     const state = get();
     const index = state.chats.findIndex((c) => c.id === chatId);
-    if (index === -1) return;
+    if (index === -1) {
+      console.error("❌ Chat not found:", chatId);
+      return;
+    }
 
     const newMessage: Message = {
       ...message,
@@ -167,7 +203,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
     try {
       await api.addMessageToChat(chatId, message);
-    } catch {
+    } catch (error) {
+      console.error("❌ Failed to add message to server, saving locally:", error);
       await AsyncStorage.setItem("chats", JSON.stringify(updated));
     }
   },
@@ -176,18 +213,23 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   updateChatTitle: async (chatId, title) => {
     const state = get();
     const index = state.chats.findIndex((c) => c.id === chatId);
-    if (index === -1) return;
+    if (index === -1) {
+      console.error("❌ Chat not found:", chatId);
+      return;
+    }
 
     try {
       await api.updateChat(chatId, { title });
-    } catch {}
+    } catch (error) {
+      console.error("❌ Failed to update chat title on server:", error);
+    }
 
     const updated = [...state.chats];
     updated[index] = { ...updated[index], title };
     set({ chats: updated });
   },
 
-  // 🔥 FIXED FUNCTION
+  // ================= GETTERS =================
   getActiveChat: () => {
     const { chats, activeChat } = get();
     return chats.find((c) => c.id === activeChat) || null;
@@ -209,6 +251,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         await api.syncLocalChatsToServer(JSON.parse(chats), active);
         await get().loadChatsFromServer();
       }
+    } catch (error) {
+      console.error("❌ Failed to sync chats to server:", error);
     } finally {
       set({ isSyncing: false });
     }

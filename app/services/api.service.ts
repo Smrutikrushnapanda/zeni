@@ -2,7 +2,7 @@ import axios from "axios";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // ✅ Railway backend (correct)
-const API_URL = "https://zeni-backend.up.railway.app";
+const API_URL = "https://zeni-backend-xceb.onrender.com";
 
 const api = axios.create({
   baseURL: API_URL,
@@ -91,54 +91,54 @@ export const getAllChats = async (): Promise<UserChatsData> => {
   return res.data.data;
 };
 
-// CREATE chat
+// CREATE chat - ✅ FIXED
 export const createChat = async (
   id: string,
   title: string
 ): Promise<void> => {
   const userId = await getOrCreateUserId();
-  await api.post(`/chats/${userId}`, {
+  await api.post(`/chats/${userId}/chats`, {
     id,
     title,
   });
 };
 
-// DELETE chat
+// DELETE chat - ✅ FIXED
 export const deleteChat = async (chatId: string): Promise<void> => {
   const userId = await getOrCreateUserId();
-  await api.delete(`/chats/${userId}/${chatId}`);
+  await api.delete(`/chats/${userId}/chats/${chatId}`);
 };
 
-// CLEAR all chats
+// CLEAR all chats - ✅ FIXED
 export const clearAllChats = async (): Promise<void> => {
   const userId = await getOrCreateUserId();
-  await api.delete(`/chats/${userId}`);
+  await api.delete(`/chats/${userId}/chats`);
 };
 
-// SET active chat
+// SET active chat - ✅ FIXED
 export const setActiveChat = async (
   chatId: string | null
 ): Promise<void> => {
   const userId = await getOrCreateUserId();
-  await api.put(`/chats/${userId}/active`, { chatId });
+  await api.put(`/chats/${userId}/active-chat`, { chatId });
 };
 
-// ADD message
+// ADD message - ✅ FIXED
 export const addMessageToChat = async (
   chatId: string,
   message: Omit<ChatMessage, "id">
 ): Promise<void> => {
   const userId = await getOrCreateUserId();
-  await api.post(`/chats/${userId}/${chatId}/messages`, message);
+  await api.post(`/chats/${userId}/chats/${chatId}/messages`, { message });
 };
 
-// UPDATE chat title
+// UPDATE chat title - ✅ FIXED
 export const updateChat = async (
   chatId: string,
-  updates: { title?: string }
+  updates: { title?: string; messages?: ChatMessage[] }
 ): Promise<void> => {
   const userId = await getOrCreateUserId();
-  await api.put(`/chats/${userId}/${chatId}`, updates);
+  await api.put(`/chats/${userId}/chats/${chatId}`, updates);
 };
 
 // SYNC (optional)
@@ -150,8 +150,8 @@ export const syncLocalChatsToServer = async (
 
   for (const chat of chats) {
     await createChat(chat.id, chat.title);
-    for (const msg of chat.messages) {
-      await addMessageToChat(chat.id, msg);
+    if (chat.messages.length > 0) {
+      await updateChat(chat.id, { messages: chat.messages });
     }
   }
 

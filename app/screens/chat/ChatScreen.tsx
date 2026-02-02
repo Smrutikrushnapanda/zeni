@@ -1,4 +1,4 @@
-// app/(drawer)/index.tsx
+// app/screens/chat/ChatScreen.tsx
 import { Message, useChatStore } from "@/store/chat.store";
 import { useThemeStore } from "@/store/theme.store";
 import { useAuthStore } from "@/store/authStore";
@@ -19,10 +19,18 @@ import {
   Text,
   TextInput,
   View,
+  Animated,
+  Modal,
+  Linking,
 } from "react-native";
+import * as Clipboard from 'expo-clipboard';  // ✅ CHANGED
 import { FormattedMessage } from "@/components/chat/FormattedMessage";
 import { sendChatMessage } from "@/app/services/api.service";
 import { useRouter } from "expo-router";
+import { useSpeechToText } from "@/hooks/useSpeechToText";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+const MIC_PERMISSION_KEY = '@mic_permission_asked';
 
 export default function ChatScreen() {
   const { theme } = useThemeStore();
@@ -42,6 +50,113 @@ export default function ChatScreen() {
   const [displayText, setDisplayText] = useState("");
   const [isTyping, setIsTyping] = useState(false);
 
+  // Speech-to-text
+  const { recognizing, transcript, error: speechError, startListening, stopListening, abort } = useSpeechToText();
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const glowAnim = useRef(new Animated.Value(0)).current;
+  
+  // Permission modal state
+  const [showPermissionModal, setShowPermissionModal] = useState(false);
+  const [micPermissionAsked, setMicPermissionAsked] = useState(false);
+
+  // Load permission state on mount
+  useEffect(() => {
+    loadPermissionState();
+  }, []);
+
+  const loadPermissionState = async () => {
+    try {
+      const asked = await AsyncStorage.getItem(MIC_PERMISSION_KEY);
+      if (asked === 'true') {
+        setMicPermissionAsked(true);
+      }
+    } catch (error) {
+      console.error('Error loading permission state:', error);
+    }
+  };
+
+  const savePermissionState = async () => {
+    try {
+      await AsyncStorage.setItem(MIC_PERMISSION_KEY, 'true');
+      setMicPermissionAsked(true);
+    } catch (error) {
+      console.error('Error saving permission state:', error);
+    }
+  };
+
+  // Update input when transcript changes - REAL-TIME UPDATE
+  useEffect(() => {
+    if (transcript && recognizing) {
+      console.log('📝 Updating input with transcript:', transcript);
+      setInput(transcript);
+    }
+  }, [transcript, recognizing]);
+
+  // Handle final transcript when recognition stops
+  useEffect(() => {
+    if (!recognizing && transcript) {
+      console.log('✅ Recognition stopped, final transcript:', transcript);
+      setInput(transcript);
+    }
+  }, [recognizing, transcript]);
+
+  // Handle speech recognition errors (silently for no-speech)
+  useEffect(() => {
+    if (speechError && speechError !== 'no-speech') {
+      Alert.alert(
+        'Speech Recognition Error',
+        `Error: ${speechError}. Please try again.`,
+        [{ text: 'OK' }]
+      );
+    }
+  }, [speechError]);
+
+  // Pulse animation for recording mic
+  useEffect(() => {
+    if (recognizing) {
+      const pulse = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 1.3,
+            duration: 600,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 600,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      
+      const glow = Animated.loop(
+        Animated.sequence([
+          Animated.timing(glowAnim, {
+            toValue: 1,
+            duration: 1000,
+            useNativeDriver: true,
+          }),
+          Animated.timing(glowAnim, {
+            toValue: 0,
+            duration: 1000,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      
+      pulse.start();
+      glow.start();
+      
+      return () => {
+        pulse.stop();
+        glow.stop();
+      };
+    } else {
+      pulseAnim.setValue(1);
+      glowAnim.setValue(0);
+    }
+  }, [recognizing]);
+
   // Get user's first name
   const getUserName = () => {
     if (isGuest) return null;
@@ -60,7 +175,7 @@ export default function ChatScreen() {
     } else if (hour < 21) {
       return name ? `Good evening, ${name}` : "Good evening";
     } else {
-      return name ? `Hello, ${name}` : "Hello";
+      return name ? `Hello, ${name}` : "My Night Buddy";
     }
   };
 
@@ -107,9 +222,22 @@ export default function ChatScreen() {
 
   // ================= SEND MESSAGE =================
   const sendMessage = async () => {
-    if (!input.trim() || !activeChat || isLoading || isTyping) return;
+    const trimmedInput = input.trim();
+    
+    console.log('🔍 Send button pressed');
+    console.log('📝 Input value:', input);
+    console.log('📝 Trimmed input:', trimmedInput);
+    console.log('💬 Active chat:', activeChat);
+    console.log('⏳ Is loading:', isLoading);
+    console.log('⌨️  Is typing:', isTyping);
+    
+    if (!trimmedInput || !activeChat || isLoading || isTyping) {
+      console.log('❌ Cannot send - conditions not met');
+      return;
+    }
 
-    const userText = input.trim();
+    const userText = trimmedInput;
+    console.log('✅ Sending message:', userText);
     setInput("");
     setError(null);
 
@@ -148,16 +276,252 @@ export default function ChatScreen() {
     }
   };
 
-  // ================= RENDER MESSAGE =================
+  // ================= HANDLE MIC PRESS =================
+  const handleMicPress = async () => {
+    if (recognizing) {
+      console.log('🛑 Stopping recording');
+      console.log('🛑 Current input:', input);
+      console.log('🛑 Current transcript:', transcript);
+      
+      stopListening();
+      
+      if (transcript && !input) {
+        console.log('⚠️ Input was empty, setting from transcript:', transcript);
+        setInput(transcript);
+      }
+      
+      return;
+    }
+
+    if (micPermissionAsked) {
+      console.log('🎤 Starting recording...');
+      const started = await startListening();
+      if (!started) {
+        Alert.alert(
+          'Permission Required',
+          'Microphone permission was denied. Please enable it in settings.',
+          [
+            {
+              text: 'Cancel',
+              style: 'cancel',
+            },
+            {
+              text: 'Open Settings',
+              onPress: () => {
+                Linking.openSettings();
+              },
+            },
+          ]
+        );
+      }
+      return;
+    }
+
+    setShowPermissionModal(true);
+  };
+
+  // ================= HANDLE CANCEL RECORDING =================
+  const handleCancelRecording = () => {
+    console.log('❌ Cancelling recording');
+    abort();
+    setInput("");
+  };
+
+  // ================= COPY TO CLIPBOARD =================
+  const handleCopyMessage = async (text: string) => {  // ✅ CHANGED TO ASYNC
+    await Clipboard.setStringAsync(text);
+    Alert.alert(
+      '✅ Copied!',
+      'Message copied to clipboard',
+      [{ text: 'OK' }],
+      { cancelable: true }
+    );
+  };
+
+  // ================= PERMISSION MODAL =================
+  const PermissionModal = () => (
+    <Modal
+      visible={showPermissionModal}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setShowPermissionModal(false)}
+    >
+      <Pressable
+        style={{
+          flex: 1,
+          backgroundColor: 'rgba(0, 0, 0, 0.6)',
+          justifyContent: 'center',
+          alignItems: 'center',
+        }}
+        onPress={() => setShowPermissionModal(false)}
+      >
+        <View
+          style={{
+            backgroundColor: theme.surface,
+            borderRadius: moderateScale(16),
+            padding: moderateScale(24),
+            marginHorizontal: horizontalScale(32),
+            maxWidth: horizontalScale(320),
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.3,
+            shadowRadius: 8,
+            elevation: 10,
+          }}
+          onStartShouldSetResponder={() => true}
+        >
+          <Pressable
+            onPress={() => setShowPermissionModal(false)}
+            style={({ pressed }) => ({
+              position: 'absolute',
+              top: moderateScale(12),
+              right: moderateScale(12),
+              padding: moderateScale(8),
+              opacity: pressed ? 0.5 : 1,
+              zIndex: 10,
+            })}
+          >
+            <Ionicons
+              name="close"
+              size={moderateScale(24)}
+              color={theme.mutedText}
+            />
+          </Pressable>
+
+          <View
+            style={{
+              alignItems: 'center',
+              marginBottom: verticalScale(16),
+            }}
+          >
+            <View
+              style={{
+                width: moderateScale(64),
+                height: moderateScale(64),
+                borderRadius: moderateScale(32),
+                backgroundColor: theme.primary + '20',
+                justifyContent: 'center',
+                alignItems: 'center',
+              }}
+            >
+              <Ionicons
+                name="mic"
+                size={moderateScale(32)}
+                color={theme.primary}
+              />
+            </View>
+          </View>
+
+          <Text
+            style={{
+              fontSize: moderateScale(20),
+              fontWeight: '700',
+              color: theme.text,
+              textAlign: 'center',
+              marginBottom: verticalScale(8),
+            }}
+          >
+            Enable Voice Input
+          </Text>
+
+          <Text
+            style={{
+              fontSize: moderateScale(15),
+              color: theme.mutedText,
+              textAlign: 'center',
+              lineHeight: verticalScale(22),
+              marginBottom: verticalScale(24),
+            }}
+          >
+            Zeni AI needs access to your microphone to convert your speech to text
+          </Text>
+
+          <View style={{ gap: verticalScale(12) }}>
+            <Pressable
+              onPress={async () => {
+                setShowPermissionModal(false);
+                await savePermissionState();
+                
+                const started = await startListening();
+                if (!started) {
+                  Alert.alert(
+                    'Permission Denied',
+                    'Microphone permission was denied. Would you like to open settings to enable it?',
+                    [
+                      {
+                        text: 'Cancel',
+                        style: 'cancel',
+                      },
+                      {
+                        text: 'Open Settings',
+                        onPress: () => {
+                          Linking.openSettings();
+                        },
+                      },
+                    ]
+                  );
+                }
+              }}
+              style={({ pressed }) => ({
+                backgroundColor: theme.primary,
+                paddingVertical: verticalScale(14),
+                borderRadius: moderateScale(12),
+                opacity: pressed ? 0.8 : 1,
+              })}
+            >
+              <Text
+                style={{
+                  color: '#FFFFFF',
+                  fontSize: moderateScale(16),
+                  fontWeight: '600',
+                  textAlign: 'center',
+                }}
+              >
+                Allow Microphone Access
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => {
+                setShowPermissionModal(false);
+                savePermissionState();
+              }}
+              style={({ pressed }) => ({
+                paddingVertical: verticalScale(14),
+                borderRadius: moderateScale(12),
+                backgroundColor: pressed ? theme.background : 'transparent',
+              })}
+            >
+              <Text
+                style={{
+                  color: theme.mutedText,
+                  fontSize: moderateScale(16),
+                  fontWeight: '600',
+                  textAlign: 'center',
+                }}
+              >
+                Not Now
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </Pressable>
+    </Modal>
+  );
+
+  // ================= RENDER MESSAGE WITH COPY =================
   const renderMessage = ({ item }: { item: Message }) => {
     if (item.isUser) {
       return (
-        <View
-          style={{
+        <Pressable
+          onLongPress={() => handleCopyMessage(item.text)}
+          delayLongPress={500}
+          style={({ pressed }) => ({
             paddingHorizontal: horizontalScale(16),
             paddingVertical: verticalScale(12),
             alignItems: "flex-end",
-          }}
+            opacity: pressed ? 0.7 : 1,
+          })}
         >
           <View
             style={{
@@ -169,19 +533,22 @@ export default function ChatScreen() {
           >
             <Text style={{ color: theme.text }}>{item.text}</Text>
           </View>
-        </View>
+        </Pressable>
       );
     }
 
     return (
-      <View
-        style={{
+      <Pressable
+        onLongPress={() => handleCopyMessage(item.text)}
+        delayLongPress={500}
+        style={({ pressed }) => ({
           paddingHorizontal: horizontalScale(16),
           paddingVertical: verticalScale(12),
-        }}
+          opacity: pressed ? 0.7 : 1,
+        })}
       >
         <FormattedMessage text={item.text} color={theme.text} />
-      </View>
+      </Pressable>
     );
   };
 
@@ -263,6 +630,11 @@ export default function ChatScreen() {
     );
   };
 
+  const glowOpacity = glowAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.3, 0.8],
+  });
+
   // ================= UI =================
   return (
     <KeyboardAvoidingView
@@ -284,6 +656,62 @@ export default function ChatScreen() {
           <Text style={{ color: "#fff", flex: 1 }}>{error}</Text>
           <Pressable onPress={() => setError(null)}>
             <Ionicons name="close" size={20} color="#fff" />
+          </Pressable>
+        </View>
+      )}
+
+      {recognizing && (
+        <View
+          style={{
+            backgroundColor: theme.primary + '15',
+            paddingVertical: verticalScale(12),
+            paddingHorizontal: horizontalScale(16),
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            borderBottomWidth: 1,
+            borderBottomColor: theme.primary + '30',
+          }}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Animated.View 
+              style={{ 
+                transform: [{ scale: pulseAnim }],
+                marginRight: horizontalScale(10),
+              }}
+            >
+              <View
+                style={{
+                  width: moderateScale(10),
+                  height: moderateScale(10),
+                  borderRadius: moderateScale(5),
+                  backgroundColor: '#FF3B30',
+                }}
+              />
+            </Animated.View>
+            <Text 
+              style={{ 
+                color: theme.text, 
+                fontSize: moderateScale(15),
+                fontWeight: '600',
+              }}
+            >
+              {transcript ? 'Speaking...' : 'Listening...'}
+            </Text>
+          </View>
+          
+          <Pressable
+            onPress={handleCancelRecording}
+            style={({ pressed }) => ({
+              padding: moderateScale(4),
+              opacity: pressed ? 0.5 : 1,
+            })}
+          >
+            <Ionicons
+              name="close-circle"
+              size={moderateScale(24)}
+              color={theme.mutedText}
+            />
           </Pressable>
         </View>
       )}
@@ -368,12 +796,45 @@ export default function ChatScreen() {
               paddingHorizontal: horizontalScale(8),
             }}
             editable={!isLoading && !isTyping}
-            onSubmitEditing={sendMessage}
           />
 
-          {input.trim() ? (
+          {recognizing ? (
             <Pressable
-              onPress={sendMessage}
+              onPress={() => {
+                console.log('✅ User tapped checkmark to finish recording');
+                handleMicPress();
+              }}
+              style={({ pressed }) => ({
+                position: 'relative',
+                width: moderateScale(40),
+                height: moderateScale(40),
+                alignItems: 'center',
+                justifyContent: 'center',
+                opacity: pressed ? 0.7 : 1,
+              })}
+            >
+              <Animated.View
+                style={{
+                  position: 'absolute',
+                  width: moderateScale(40),
+                  height: moderateScale(40),
+                  borderRadius: moderateScale(20),
+                  backgroundColor: theme.primary,
+                  opacity: glowOpacity,
+                }}
+              />
+              <Ionicons
+                name="checkmark-circle"
+                size={moderateScale(32)}
+                color={theme.primary}
+              />
+            </Pressable>
+          ) : input.trim().length > 0 ? (
+            <Pressable
+              onPress={() => {
+                console.log('📤 User tapped send button');
+                sendMessage();
+              }}
               disabled={isLoading || isTyping}
               style={({ pressed }) => ({
                 backgroundColor: theme.primary,
@@ -397,9 +858,17 @@ export default function ChatScreen() {
             </Pressable>
           ) : (
             <Pressable
+              onPress={() => {
+                console.log('🎤 User tapped mic button');
+                handleMicPress();
+              }}
+              disabled={isLoading || isTyping}
               style={({ pressed }) => ({
-                padding: moderateScale(8),
-                opacity: pressed ? 0.5 : 1,
+                width: moderateScale(40),
+                height: moderateScale(40),
+                alignItems: 'center',
+                justifyContent: 'center',
+                opacity: pressed ? 0.7 : 1,
               })}
             >
               <Ionicons
@@ -411,6 +880,8 @@ export default function ChatScreen() {
           )}
         </View>
       </View>
+
+      <PermissionModal />
     </KeyboardAvoidingView>
   );
 }
