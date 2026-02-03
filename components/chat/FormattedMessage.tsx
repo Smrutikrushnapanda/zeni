@@ -1,6 +1,6 @@
 // components/chat/FormattedMessage.tsx
 import React, { useState } from "react";
-import { Text, View, Pressable, ScrollView, Alert, Platform } from "react-native";
+import { Text, View, Pressable, ScrollView, Platform } from "react-native";
 import { moderateScale, verticalScale, horizontalScale } from "@/utils/metrics";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from 'expo-clipboard';
@@ -9,22 +9,21 @@ import { useThemeStore } from "@/store/theme.store";
 interface FormattedMessageProps {
   text: string;
   color: string;
+  onCopy?: (text: string) => void;
 }
 
-export const FormattedMessage: React.FC<FormattedMessageProps> = ({ text, color }) => {
+export const FormattedMessage: React.FC<FormattedMessageProps> = ({ text, color, onCopy }) => {
   const { theme, mode } = useThemeStore();
 
   // Parse message into text and code blocks
   const parseMessage = (message: string) => {
     const parts: Array<{ type: "text" | "code"; content: string; language?: string }> = [];
     
-    // Match code blocks: ```language\ncode\n```
     const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
     let lastIndex = 0;
     let match;
 
     while ((match = codeBlockRegex.exec(message)) !== null) {
-      // Add text before code block
       if (match.index > lastIndex) {
         const textContent = message.substring(lastIndex, match.index);
         if (textContent.trim()) {
@@ -32,7 +31,6 @@ export const FormattedMessage: React.FC<FormattedMessageProps> = ({ text, color 
         }
       }
 
-      // Add code block
       parts.push({
         type: "code",
         content: match[2].trim(),
@@ -42,7 +40,6 @@ export const FormattedMessage: React.FC<FormattedMessageProps> = ({ text, color 
       lastIndex = match.index + match[0].length;
     }
 
-    // Add remaining text
     if (lastIndex < message.length) {
       const textContent = message.substring(lastIndex);
       if (textContent.trim()) {
@@ -50,7 +47,6 @@ export const FormattedMessage: React.FC<FormattedMessageProps> = ({ text, color 
       }
     }
 
-    // If no code blocks found, return the whole message as text
     if (parts.length === 0) {
       parts.push({ type: "text", content: message });
     }
@@ -59,17 +55,19 @@ export const FormattedMessage: React.FC<FormattedMessageProps> = ({ text, color 
   };
 
   // Copy to clipboard
-  const copyToClipboard = async (text: string, label: string = "Text") => {
+  const copyToClipboard = async (text: string) => {
     await Clipboard.setStringAsync(text);
-    Alert.alert("✅ Copied!", `${label} copied to clipboard`);
+    if (onCopy) {
+      onCopy(text);
+    }
   };
 
-  // Render code block with copy button
+  // Render code block with BOTH vertical and horizontal scroll
   const CodeBlock = ({ code, language }: { code: string; language: string }) => {
     const [copied, setCopied] = useState(false);
 
     const handleCopy = async () => {
-      await copyToClipboard(code, "Code");
+      await copyToClipboard(code);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     };
@@ -136,23 +134,32 @@ export const FormattedMessage: React.FC<FormattedMessageProps> = ({ text, color 
           </Pressable>
         </View>
 
-        {/* Code Content */}
+        {/* Code Content - VERTICAL SCROLL (Outer) */}
         <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={{ maxHeight: verticalScale(300) }}
+          style={{ 
+            maxHeight: verticalScale(300),
+          }}
+          showsVerticalScrollIndicator={true}
+          nestedScrollEnabled={true}
         >
-          <Text
-            style={{
-              fontSize: moderateScale(13),
-              lineHeight: verticalScale(20),
-              padding: moderateScale(12),
-              fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-              color: mode === "dark" ? "#C9D1D9" : "#24292E",
-            }}
+          {/* Code Content - HORIZONTAL SCROLL (Inner) */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={true}
+            nestedScrollEnabled={true}
           >
-            {code}
-          </Text>
+            <Text
+              style={{
+                fontSize: moderateScale(13),
+                lineHeight: verticalScale(20),
+                padding: moderateScale(12),
+                fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+                color: mode === "dark" ? "#C9D1D9" : "#24292E",
+              }}
+            >
+              {code}
+            </Text>
+          </ScrollView>
         </ScrollView>
       </View>
     );
@@ -164,8 +171,7 @@ export const FormattedMessage: React.FC<FormattedMessageProps> = ({ text, color 
     const elements: JSX.Element[] = [];
     let key = 0;
 
-    lines.forEach((line, index) => {
-      // Empty line - add spacing
+    lines.forEach((line) => {
       if (line.trim() === '') {
         elements.push(
           <View key={`space-${key++}`} style={{ height: verticalScale(8) }} />
@@ -173,7 +179,6 @@ export const FormattedMessage: React.FC<FormattedMessageProps> = ({ text, color 
         return;
       }
 
-      // Bold headings (text with ** or ending with :)
       if (line.match(/^\*\*(.+)\*\*$/) || line.match(/^(.+):$/)) {
         const cleanText = line.replace(/\*\*/g, '').trim();
         elements.push(
@@ -194,7 +199,6 @@ export const FormattedMessage: React.FC<FormattedMessageProps> = ({ text, color 
         return;
       }
 
-      // Bullet points
       if (line.match(/^[•●▪︎]\s/)) {
         const text = line.replace(/^[•●▪︎]\s/, '').trim();
         elements.push(
@@ -231,7 +235,6 @@ export const FormattedMessage: React.FC<FormattedMessageProps> = ({ text, color 
         return;
       }
 
-      // Numbered lists
       if (line.match(/^\d+\.\s/)) {
         const match = line.match(/^(\d+)\.\s(.+)$/);
         if (match) {
@@ -273,7 +276,6 @@ export const FormattedMessage: React.FC<FormattedMessageProps> = ({ text, color 
         }
       }
 
-      // Bold text inline (**text**)
       const parts = line.split(/(\*\*[^*]+\*\*)/g);
       const textElements = parts.map((part, i) => {
         if (part.match(/^\*\*[^*]+\*\*$/)) {
@@ -289,7 +291,6 @@ export const FormattedMessage: React.FC<FormattedMessageProps> = ({ text, color 
         return part;
       });
 
-      // Regular paragraph
       elements.push(
         <Text
           key={`text-${key++}`}

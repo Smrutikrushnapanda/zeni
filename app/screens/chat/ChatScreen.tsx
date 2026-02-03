@@ -23,7 +23,7 @@ import {
   Modal,
   Linking,
 } from "react-native";
-import * as Clipboard from 'expo-clipboard';  // ✅ CHANGED
+import * as Clipboard from 'expo-clipboard';
 import { FormattedMessage } from "@/components/chat/FormattedMessage";
 import { sendChatMessage } from "@/app/services/api.service";
 import { useRouter } from "expo-router";
@@ -49,6 +49,10 @@ export default function ChatScreen() {
   const [typingText, setTypingText] = useState("");
   const [displayText, setDisplayText] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+
+  // Toast notification state
+  const [showCopyToast, setShowCopyToast] = useState(false);
+  const toastAnim = useRef(new Animated.Value(0)).current;
 
   // Speech-to-text
   const { recognizing, transcript, error: speechError, startListening, stopListening, abort } = useSpeechToText();
@@ -84,10 +88,9 @@ export default function ChatScreen() {
     }
   };
 
-  // Update input when transcript changes - REAL-TIME UPDATE
+  // Update input when transcript changes
   useEffect(() => {
     if (transcript && recognizing) {
-      console.log('📝 Updating input with transcript:', transcript);
       setInput(transcript);
     }
   }, [transcript, recognizing]);
@@ -95,12 +98,11 @@ export default function ChatScreen() {
   // Handle final transcript when recognition stops
   useEffect(() => {
     if (!recognizing && transcript) {
-      console.log('✅ Recognition stopped, final transcript:', transcript);
       setInput(transcript);
     }
   }, [recognizing, transcript]);
 
-  // Handle speech recognition errors (silently for no-speech)
+  // Handle speech recognition errors
   useEffect(() => {
     if (speechError && speechError !== 'no-speech') {
       Alert.alert(
@@ -220,97 +222,82 @@ export default function ChatScreen() {
     };
   }, [typingText, isTyping, activeChat, addMessage]);
 
-  // ================= SEND MESSAGE =================
-  const sendMessage = async () => {
-    const trimmedInput = input.trim();
-    
-    console.log('🔍 Send button pressed');
-    console.log('📝 Input value:', input);
-    console.log('📝 Trimmed input:', trimmedInput);
-    console.log('💬 Active chat:', activeChat);
-    console.log('⏳ Is loading:', isLoading);
-    console.log('⌨️  Is typing:', isTyping);
-    
-    if (!trimmedInput || !activeChat || isLoading || isTyping) {
-      console.log('❌ Cannot send - conditions not met');
-      return;
-    }
+// ================= SEND MESSAGE =================
+const sendMessage = async () => {
+  const trimmedInput = input.trim();
+  
+  if (!trimmedInput || !activeChat || isLoading || isTyping) {
+    return;
+  }
 
-    const userText = trimmedInput;
-    console.log('✅ Sending message:', userText);
-    setInput("");
-    setError(null);
+  const userText = trimmedInput;
+  setInput("");
+  setError(null);
 
-    addMessage(activeChat, {
-      text: userText,
-      isUser: true,
-      timestamp: new Date().toISOString(),
-    });
+  addMessage(activeChat, {
+    text: userText,
+    isUser: true,
+    timestamp: new Date().toISOString(),
+  });
 
-    setIsLoading(true);
+  setIsLoading(true);
 
-    try {
-      const res = await sendChatMessage(userText, activeChat);
-      const reply = res?.response || res?.reply || "No response";
+  try {
+    const res = await sendChatMessage(userText, activeChat);
+    const reply = res?.response || res?.reply || "No response";
 
-      setTypingText(reply);
-      setIsTyping(true);
-    } catch (err: any) {
-      console.error(err);
-      setError("Failed to connect to AI");
-
+    // ✅ ADDED: Check length for typing animation
+    if (reply.length > 300) {
+      // Long response → show instantly (no typing animation)
       addMessage(activeChat, {
-        text:
-          "Sorry, I'm having trouble connecting right now. Please try again later.",
+        text: reply,
         isUser: false,
         timestamp: new Date().toISOString(),
       });
-
-      Alert.alert(
-        "Connection Error",
-        "Make sure your backend server is running.",
-        [{ text: "OK" }]
-      );
-    } finally {
-      setIsLoading(false);
+    } else {
+      // Short response → typing animation
+      setTypingText(reply);
+      setIsTyping(true);
     }
-  };
+  } catch (err: any) {
+    console.error(err);
+    setError("Failed to connect to AI");
+
+    addMessage(activeChat, {
+      text: "Sorry, I'm having trouble connecting right now. Please try again later.",
+      isUser: false,
+      timestamp: new Date().toISOString(),
+    });
+
+    Alert.alert(
+      "Connection Error",
+      "Make sure your backend server is running.",
+      [{ text: "OK" }]
+    );
+  } finally {
+    setIsLoading(false);
+  }
+};
 
   // ================= HANDLE MIC PRESS =================
   const handleMicPress = async () => {
     if (recognizing) {
-      console.log('🛑 Stopping recording');
-      console.log('🛑 Current input:', input);
-      console.log('🛑 Current transcript:', transcript);
-      
       stopListening();
-      
       if (transcript && !input) {
-        console.log('⚠️ Input was empty, setting from transcript:', transcript);
         setInput(transcript);
       }
-      
       return;
     }
 
     if (micPermissionAsked) {
-      console.log('🎤 Starting recording...');
       const started = await startListening();
       if (!started) {
         Alert.alert(
           'Permission Required',
           'Microphone permission was denied. Please enable it in settings.',
           [
-            {
-              text: 'Cancel',
-              style: 'cancel',
-            },
-            {
-              text: 'Open Settings',
-              onPress: () => {
-                Linking.openSettings();
-              },
-            },
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Open Settings', onPress: () => Linking.openSettings() },
           ]
         );
       }
@@ -322,20 +309,32 @@ export default function ChatScreen() {
 
   // ================= HANDLE CANCEL RECORDING =================
   const handleCancelRecording = () => {
-    console.log('❌ Cancelling recording');
     abort();
     setInput("");
   };
 
-  // ================= COPY TO CLIPBOARD =================
-  const handleCopyMessage = async (text: string) => {  // ✅ CHANGED TO ASYNC
+  // ================= COPY TO CLIPBOARD WITH TOAST =================
+  const handleCopyMessage = async (text: string) => {
     await Clipboard.setStringAsync(text);
-    Alert.alert(
-      '✅ Copied!',
-      'Message copied to clipboard',
-      [{ text: 'OK' }],
-      { cancelable: true }
-    );
+    showToast();
+  };
+
+  const showToast = () => {
+    setShowCopyToast(true);
+    
+    Animated.sequence([
+      Animated.timing(toastAnim, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+      Animated.delay(1500),
+      Animated.timing(toastAnim, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+    ]).start(() => setShowCopyToast(false));
   };
 
   // ================= PERMISSION MODAL =================
@@ -381,19 +380,10 @@ export default function ChatScreen() {
               zIndex: 10,
             })}
           >
-            <Ionicons
-              name="close"
-              size={moderateScale(24)}
-              color={theme.mutedText}
-            />
+            <Ionicons name="close" size={moderateScale(24)} color={theme.mutedText} />
           </Pressable>
 
-          <View
-            style={{
-              alignItems: 'center',
-              marginBottom: verticalScale(16),
-            }}
-          >
+          <View style={{ alignItems: 'center', marginBottom: verticalScale(16) }}>
             <View
               style={{
                 width: moderateScale(64),
@@ -404,11 +394,7 @@ export default function ChatScreen() {
                 alignItems: 'center',
               }}
             >
-              <Ionicons
-                name="mic"
-                size={moderateScale(32)}
-                color={theme.primary}
-              />
+              <Ionicons name="mic" size={moderateScale(32)} color={theme.primary} />
             </View>
           </View>
 
@@ -448,16 +434,8 @@ export default function ChatScreen() {
                     'Permission Denied',
                     'Microphone permission was denied. Would you like to open settings to enable it?',
                     [
-                      {
-                        text: 'Cancel',
-                        style: 'cancel',
-                      },
-                      {
-                        text: 'Open Settings',
-                        onPress: () => {
-                          Linking.openSettings();
-                        },
-                      },
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: 'Open Settings', onPress: () => Linking.openSettings() },
                     ]
                   );
                 }
@@ -509,20 +487,20 @@ export default function ChatScreen() {
     </Modal>
   );
 
-  // ================= RENDER MESSAGE WITH COPY =================
-  const renderMessage = ({ item }: { item: Message }) => {
-    if (item.isUser) {
-      return (
-        <Pressable
-          onLongPress={() => handleCopyMessage(item.text)}
-          delayLongPress={500}
-          style={({ pressed }) => ({
-            paddingHorizontal: horizontalScale(16),
-            paddingVertical: verticalScale(12),
-            alignItems: "flex-end",
-            opacity: pressed ? 0.7 : 1,
-          })}
-        >
+  // ================= RENDER MESSAGE WITH COPY ICON =================
+  // ================= RENDER MESSAGE WITH COPY ICON BELOW =================
+const renderMessage = ({ item }: { item: Message }) => {
+  if (item.isUser) {
+    return (
+      <View
+        style={{
+          paddingHorizontal: horizontalScale(16),
+          paddingVertical: verticalScale(12),
+          alignItems: "flex-end",
+        }}
+      >
+        <View style={{ alignItems: 'flex-end' }}>
+          {/* Message Bubble */}
           <View
             style={{
               backgroundColor: theme.surface,
@@ -533,24 +511,83 @@ export default function ChatScreen() {
           >
             <Text style={{ color: theme.text }}>{item.text}</Text>
           </View>
-        </Pressable>
-      );
-    }
 
-    return (
-      <Pressable
-        onLongPress={() => handleCopyMessage(item.text)}
-        delayLongPress={500}
-        style={({ pressed }) => ({
-          paddingHorizontal: horizontalScale(16),
-          paddingVertical: verticalScale(12),
-          opacity: pressed ? 0.7 : 1,
-        })}
-      >
-        <FormattedMessage text={item.text} color={theme.text} />
-      </Pressable>
+          {/* Copy Icon Below */}
+          <Pressable
+            onPress={() => handleCopyMessage(item.text)}
+            style={({ pressed }) => ({
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: horizontalScale(4),
+              marginTop: verticalScale(4),
+              paddingHorizontal: horizontalScale(8),
+              paddingVertical: verticalScale(4),
+              opacity: pressed ? 0.5 : 0.6,
+            })}
+          >
+            <Ionicons
+              name="copy-outline"
+              size={moderateScale(14)}
+              color={theme.mutedText}
+            />
+            <Text
+              style={{
+                fontSize: moderateScale(12),
+                color: theme.mutedText,
+              }}
+            >
+              Copy
+            </Text>
+          </Pressable>
+        </View>
+      </View>
     );
-  };
+  }
+
+  return (
+    <View
+      style={{
+        paddingHorizontal: horizontalScale(16),
+        paddingVertical: verticalScale(12),
+      }}
+    >
+      <View style={{ alignItems: 'flex-start' }}>
+        {/* Message Content */}
+        <View style={{ maxWidth: "90%" }}>
+          <FormattedMessage text={item.text} color={theme.text} onCopy={handleCopyMessage} />
+        </View>
+
+        {/* Copy Icon Below */}
+        <Pressable
+          onPress={() => handleCopyMessage(item.text)}
+          style={({ pressed }) => ({
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: horizontalScale(4),
+            marginTop: verticalScale(4),
+            paddingHorizontal: horizontalScale(8),
+            paddingVertical: verticalScale(4),
+            opacity: pressed ? 0.5 : 0.6,
+          })}
+        >
+          <Ionicons
+            name="copy-outline"
+            size={moderateScale(14)}
+            color={theme.mutedText}
+          />
+          <Text
+            style={{
+              fontSize: moderateScale(12),
+              color: theme.mutedText,
+            }}
+          >
+            Copy
+          </Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+};
 
   // ================= EMPTY CHAT STATE =================
   const renderEmptyChat = () => {
@@ -707,11 +744,7 @@ export default function ChatScreen() {
               opacity: pressed ? 0.5 : 1,
             })}
           >
-            <Ionicons
-              name="close-circle"
-              size={moderateScale(24)}
-              color={theme.mutedText}
-            />
+            <Ionicons name="close-circle" size={moderateScale(24)} color={theme.mutedText} />
           </Pressable>
         </View>
       )}
@@ -721,9 +754,7 @@ export default function ChatScreen() {
         data={messages}
         keyExtractor={(i) => i.id}
         renderItem={renderMessage}
-        contentContainerStyle={{
-          flexGrow: 1,
-        }}
+        contentContainerStyle={{ flexGrow: 1 }}
         ListEmptyComponent={renderEmptyChat}
         ListFooterComponent={
           <>
@@ -755,12 +786,53 @@ export default function ChatScreen() {
                   paddingVertical: verticalScale(12),
                 }}
               >
-                <FormattedMessage text={displayText} color={theme.text} />
+                <FormattedMessage text={displayText} color={theme.text} onCopy={handleCopyMessage} />
               </View>
             )}
           </>
         }
       />
+
+      {/* COPY SUCCESS TOAST */}
+      {showCopyToast && (
+        <Animated.View
+          style={{
+            position: 'absolute',
+            top: verticalScale(100),
+            alignSelf: 'center',
+            backgroundColor: theme.primary,
+            paddingHorizontal: horizontalScale(20),
+            paddingVertical: verticalScale(10),
+            borderRadius: moderateScale(20),
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: horizontalScale(8),
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.25,
+            shadowRadius: 4,
+            elevation: 5,
+            opacity: toastAnim,
+            transform: [{
+              translateY: toastAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [-20, 0],
+              }),
+            }],
+          }}
+        >
+          <Ionicons name="checkmark-circle" size={moderateScale(20)} color="#FFFFFF" />
+          <Text
+            style={{
+              color: '#FFFFFF',
+              fontSize: moderateScale(14),
+              fontWeight: '600',
+            }}
+          >
+            Copied!
+          </Text>
+        </Animated.View>
+      )}
 
       <View
         style={{
@@ -800,10 +872,7 @@ export default function ChatScreen() {
 
           {recognizing ? (
             <Pressable
-              onPress={() => {
-                console.log('✅ User tapped checkmark to finish recording');
-                handleMicPress();
-              }}
+              onPress={handleMicPress}
               style={({ pressed }) => ({
                 position: 'relative',
                 width: moderateScale(40),
@@ -823,18 +892,11 @@ export default function ChatScreen() {
                   opacity: glowOpacity,
                 }}
               />
-              <Ionicons
-                name="checkmark-circle"
-                size={moderateScale(32)}
-                color={theme.primary}
-              />
+              <Ionicons name="checkmark-circle" size={moderateScale(32)} color={theme.primary} />
             </Pressable>
           ) : input.trim().length > 0 ? (
             <Pressable
-              onPress={() => {
-                console.log('📤 User tapped send button');
-                sendMessage();
-              }}
+              onPress={sendMessage}
               disabled={isLoading || isTyping}
               style={({ pressed }) => ({
                 backgroundColor: theme.primary,
@@ -849,19 +911,12 @@ export default function ChatScreen() {
               {isLoading ? (
                 <ActivityIndicator size="small" color="#FFFFFF" />
               ) : (
-                <Ionicons
-                  name="arrow-up"
-                  size={moderateScale(20)}
-                  color="#FFFFFF"
-                />
+                <Ionicons name="arrow-up" size={moderateScale(20)} color="#FFFFFF" />
               )}
             </Pressable>
           ) : (
             <Pressable
-              onPress={() => {
-                console.log('🎤 User tapped mic button');
-                handleMicPress();
-              }}
+              onPress={handleMicPress}
               disabled={isLoading || isTyping}
               style={({ pressed }) => ({
                 width: moderateScale(40),
@@ -871,11 +926,7 @@ export default function ChatScreen() {
                 opacity: pressed ? 0.7 : 1,
               })}
             >
-              <Ionicons
-                name="mic-outline"
-                size={moderateScale(24)}
-                color={theme.mutedText}
-              />
+              <Ionicons name="mic-outline" size={moderateScale(24)} color={theme.mutedText} />
             </Pressable>
           )}
         </View>

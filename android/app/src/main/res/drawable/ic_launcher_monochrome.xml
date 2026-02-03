@@ -3,6 +3,7 @@
   <item>
     <bitmap
         android:gravity="center"
-        android:src="@drawable/android_icon_background" />
+        android:src="@drawable/android_icon_monochrome" />
   </item>
 </layer-list>
+

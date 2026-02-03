@@ -16,11 +16,11 @@
         "NSMicrophoneUsageDescription": "Allow Zeni AI to access your microphone for voice input."
       }
     },
-    "android": {
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
-      },
+"android": {
+        "adaptiveIcon": {
+          "foregroundImage": "./assets/images/android-icon-foreground.png",
+          "backgroundColor": "#ffffff"
+        },
       "package": "com.smrutipanchsoft.zeni",
       "permissions": [
         "android.permission.RECORD_AUDIO",

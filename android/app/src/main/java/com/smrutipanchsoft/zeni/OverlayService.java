@@ -19,6 +19,11 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.text.Html;
 import android.text.InputType;
+import android.text.SpannableString;
+import android.text.Spanned;
+import android.text.style.BackgroundColorSpan;
+import android.text.style.ForegroundColorSpan;
+import android.text.style.TypefaceSpan;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.util.TypedValue;
@@ -34,6 +39,7 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -43,6 +49,8 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class OverlayService extends Service {
 
@@ -93,6 +101,431 @@ public class OverlayService extends Service {
     private static final String CHANNEL_ID = "overlay_service_channel";
     private static final int NOTIFICATION_ID = 1001;
 
+    // Chat Message Model
+    private static class ChatMessage {
+        String message;
+        boolean isUser;
+        String timestamp;
+
+        ChatMessage(String message, boolean isUser, String timestamp) {
+            this.message = message;
+            this.isUser = isUser;
+            this.timestamp = timestamp;
+        }
+    }
+
+    // ======================= CODE BLOCK PARSER =======================
+    private static class CodeBlock {
+        String language;
+        String code;
+
+        CodeBlock(String language, String code) {
+            this.language = language;
+            this.code = code;
+        }
+    }
+
+    private static class MessagePart {
+        enum Type { TEXT, CODE }
+        Type type;
+        String content;
+        String language;
+
+        MessagePart(Type type, String content, String language) {
+            this.type = type;
+            this.content = content;
+            this.language = language;
+        }
+    }
+
+    private List<MessagePart> parseMessageWithCode(String message) {
+        List<MessagePart> parts = new ArrayList<>();
+        Pattern codePattern = Pattern.compile("```(\\w+)?\\n([\\s\\S]*?)```");
+        Matcher matcher = codePattern.matcher(message);
+        
+        int lastEnd = 0;
+        while (matcher.find()) {
+            // Add text before code block
+            if (matcher.start() > lastEnd) {
+                String textContent = message.substring(lastEnd, matcher.start()).trim();
+                if (!textContent.isEmpty()) {
+                    parts.add(new MessagePart(MessagePart.Type.TEXT, textContent, null));
+                }
+            }
+            
+            // Add code block
+            String language = matcher.group(1);
+            String code = matcher.group(2);
+            if (language == null || language.isEmpty()) {
+                language = "code";
+            }
+            parts.add(new MessagePart(MessagePart.Type.CODE, code.trim(), language));
+            
+            lastEnd = matcher.end();
+        }
+        
+        // Add remaining text
+        if (lastEnd < message.length()) {
+            String textContent = message.substring(lastEnd).trim();
+            if (!textContent.isEmpty()) {
+                parts.add(new MessagePart(MessagePart.Type.TEXT, textContent, null));
+            }
+        }
+        
+        // If no code blocks found, return entire message as text
+        if (parts.isEmpty()) {
+            parts.add(new MessagePart(MessagePart.Type.TEXT, message, null));
+        }
+        
+        return parts;
+    }
+
+    // ======================= CHAT ADAPTER WITH COPY ICONS =======================
+    private class ChatAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
+        private static final int TYPE_USER = 1;
+        private static final int TYPE_AI = 2;
+        
+        private List<ChatMessage> messages;
+
+        ChatAdapter(List<ChatMessage> messages) {
+            this.messages = messages;
+        }
+
+        @Override
+        public int getItemViewType(int position) {
+            return messages.get(position).isUser ? TYPE_USER : TYPE_AI;
+        }
+
+        @Override
+        public RecyclerView.ViewHolder onCreateViewHolder(ViewGroup parent, int viewType) {
+            if (viewType == TYPE_USER) {
+                return new UserMessageViewHolder(createUserMessageView(parent.getContext()));
+            } else {
+                return new AIMessageViewHolder(createAIMessageView(parent.getContext()));
+            }
+        }
+
+        @Override
+        public void onBindViewHolder(RecyclerView.ViewHolder holder, int position) {
+            ChatMessage message = messages.get(position);
+            
+            if (holder.getItemViewType() == TYPE_USER) {
+                ((UserMessageViewHolder) holder).bind(message);
+            } else {
+                ((AIMessageViewHolder) holder).bind(message);
+            }
+        }
+
+        @Override
+        public int getItemCount() {
+            return messages.size();
+        }
+
+        // ======================= CREATE USER MESSAGE VIEW =======================
+        private View createUserMessageView(Context context) {
+            float dp = context.getResources().getDisplayMetrics().density;
+            
+            LinearLayout container = new LinearLayout(context);
+            container.setOrientation(LinearLayout.HORIZONTAL);
+            container.setGravity(Gravity.END);
+            container.setPadding((int)(12*dp), (int)(8*dp), (int)(12*dp), (int)(8*dp));
+            
+            // Copy icon (LEFT side for user messages)
+            ImageView copyIcon = new ImageView(context);
+            copyIcon.setId(View.generateViewId());
+            copyIcon.setImageResource(android.R.drawable.ic_menu_set_as);
+            copyIcon.setColorFilter(Color.parseColor("#999999"));
+            LinearLayout.LayoutParams copyParams = new LinearLayout.LayoutParams((int)(20*dp), (int)(20*dp));
+            copyParams.setMarginEnd((int)(8*dp));
+            copyParams.gravity = Gravity.TOP;
+            copyIcon.setLayoutParams(copyParams);
+            copyIcon.setPadding((int)(4*dp), (int)(4*dp), (int)(4*dp), (int)(4*dp));
+            
+            // Message bubble
+            LinearLayout messageBubble = new LinearLayout(context);
+            messageBubble.setId(View.generateViewId());
+            messageBubble.setOrientation(LinearLayout.VERTICAL);
+            messageBubble.setPadding((int)(12*dp), (int)(8*dp), (int)(12*dp), (int)(8*dp));
+            
+            GradientDrawable bubbleBg = new GradientDrawable();
+            bubbleBg.setColor(Color.parseColor("#F0F0F0"));
+            bubbleBg.setCornerRadius(16*dp);
+            messageBubble.setBackground(bubbleBg);
+            
+            LinearLayout.LayoutParams bubbleParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            );
+            bubbleParams.weight = 0;
+            messageBubble.setLayoutParams(bubbleParams);
+            
+            TextView messageText = new TextView(context);
+            messageText.setId(View.generateViewId());
+            messageText.setTextColor(Color.parseColor("#1A1A1A"));
+            messageText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+            messageText.setLineSpacing(0, 1.2f);
+            messageBubble.addView(messageText);
+            
+            container.addView(copyIcon);
+            container.addView(messageBubble);
+            
+            return container;
+        }
+
+        // ======================= CREATE AI MESSAGE VIEW =======================
+        private View createAIMessageView(Context context) {
+            float dp = context.getResources().getDisplayMetrics().density;
+            
+            LinearLayout container = new LinearLayout(context);
+            container.setOrientation(LinearLayout.HORIZONTAL);
+            container.setGravity(Gravity.START);
+            container.setPadding((int)(12*dp), (int)(8*dp), (int)(12*dp), (int)(8*dp));
+            
+            // Message content container
+            LinearLayout contentContainer = new LinearLayout(context);
+            contentContainer.setId(View.generateViewId());
+            contentContainer.setOrientation(LinearLayout.VERTICAL);
+            LinearLayout.LayoutParams contentParams = new LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            );
+            contentParams.weight = 1;
+            contentContainer.setLayoutParams(contentParams);
+            
+            // Copy icon (RIGHT side for AI messages)
+            ImageView copyIcon = new ImageView(context);
+            copyIcon.setId(View.generateViewId());
+            copyIcon.setImageResource(android.R.drawable.ic_menu_set_as);
+            copyIcon.setColorFilter(Color.parseColor("#999999"));
+            LinearLayout.LayoutParams copyParams = new LinearLayout.LayoutParams((int)(20*dp), (int)(20*dp));
+            copyParams.setMarginStart((int)(8*dp));
+            copyParams.gravity = Gravity.TOP;
+            copyIcon.setLayoutParams(copyParams);
+            copyIcon.setPadding((int)(4*dp), (int)(4*dp), (int)(4*dp), (int)(4*dp));
+            
+            container.addView(contentContainer);
+            container.addView(copyIcon);
+            
+            return container;
+        }
+
+        // ======================= USER MESSAGE VIEW HOLDER =======================
+        class UserMessageViewHolder extends RecyclerView.ViewHolder {
+            LinearLayout messageBubble;
+            TextView messageText;
+            ImageView copyIcon;
+
+            UserMessageViewHolder(View itemView) {
+                super(itemView);
+                messageBubble = itemView.findViewById(itemView.getId());
+                
+                // Find views
+                LinearLayout container = (LinearLayout) itemView;
+                copyIcon = (ImageView) container.getChildAt(0);
+                messageBubble = (LinearLayout) container.getChildAt(1);
+                messageText = (TextView) messageBubble.getChildAt(0);
+            }
+
+            void bind(ChatMessage message) {
+                messageText.setText(message.message);
+                
+                // Setup copy functionality
+                copyIcon.setOnClickListener(v -> {
+                    copyToClipboard(message.message);
+                });
+            }
+        }
+
+        // ======================= AI MESSAGE VIEW HOLDER =======================
+        class AIMessageViewHolder extends RecyclerView.ViewHolder {
+            LinearLayout contentContainer;
+            ImageView copyIcon;
+            String rawMessage;
+
+            AIMessageViewHolder(View itemView) {
+                super(itemView);
+                
+                LinearLayout container = (LinearLayout) itemView;
+                contentContainer = (LinearLayout) container.getChildAt(0);
+                copyIcon = (ImageView) container.getChildAt(1);
+            }
+
+            void bind(ChatMessage message) {
+    float dp = itemView.getContext().getResources().getDisplayMetrics().density;
+    contentContainer.removeAllViews();
+    rawMessage = message.message;
+    
+    List<MessagePart> parts = parseMessageWithCode(message.message);
+    
+    for (MessagePart part : parts) {
+        if (part.type == MessagePart.Type.CODE) {
+            // ✅ FIXED: Use part.content instead of part.code
+            contentContainer.addView(createCodeBlockView(part.content, part.language));
+        } else {
+            contentContainer.addView(createTextView(part.content));
+        }
+    }
+    
+    // Setup copy functionality for entire message
+    copyIcon.setOnClickListener(v -> {
+        // Remove HTML and code block markers when copying
+        String plainText = Html.fromHtml(rawMessage).toString();
+        plainText = plainText.replaceAll("```\\w*\\n", "").replaceAll("```", "");
+        copyToClipboard(plainText);
+    });
+}
+
+            private View createTextView(String text) {
+                float dp = itemView.getContext().getResources().getDisplayMetrics().density;
+                
+                TextView textView = new TextView(itemView.getContext());
+                textView.setText(Html.fromHtml(formatText(text)));
+                textView.setTextColor(Color.parseColor("#1A1A1A"));
+                textView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+                textView.setLineSpacing(0, 1.2f);
+                
+                LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                );
+                params.setMargins(0, 0, 0, (int)(8*dp));
+                textView.setLayoutParams(params);
+                
+                return textView;
+            }
+
+            private View createCodeBlockView(String code, String language) {
+                float dp = itemView.getContext().getResources().getDisplayMetrics().density;
+                
+                LinearLayout codeBlock = new LinearLayout(itemView.getContext());
+                codeBlock.setOrientation(LinearLayout.VERTICAL);
+                
+                GradientDrawable codeBg = new GradientDrawable();
+                codeBg.setColor(Color.parseColor("#F6F8FA"));
+                codeBg.setCornerRadius(8*dp);
+                codeBg.setStroke((int)(1*dp), Color.parseColor("#E1E4E8"));
+                codeBlock.setBackground(codeBg);
+                
+                LinearLayout.LayoutParams codeBlockParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                );
+                codeBlockParams.setMargins(0, (int)(8*dp), 0, (int)(8*dp));
+                codeBlock.setLayoutParams(codeBlockParams);
+                
+                // Code header
+                LinearLayout header = new LinearLayout(itemView.getContext());
+                header.setOrientation(LinearLayout.HORIZONTAL);
+                header.setGravity(Gravity.CENTER_VERTICAL);
+                header.setPadding((int)(12*dp), (int)(8*dp), (int)(12*dp), (int)(8*dp));
+                header.setBackgroundColor(Color.parseColor("#E1E4E8"));
+                
+                TextView langText = new TextView(itemView.getContext());
+                langText.setText(language.toLowerCase());
+                langText.setTextColor(Color.parseColor("#586069"));
+                langText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+                langText.setTypeface(null, android.graphics.Typeface.BOLD);
+                
+                LinearLayout.LayoutParams langParams = new LinearLayout.LayoutParams(
+                    0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                );
+                langParams.weight = 1;
+                langText.setLayoutParams(langParams);
+                
+                // Copy code button
+                LinearLayout copyBtn = new LinearLayout(itemView.getContext());
+                copyBtn.setOrientation(LinearLayout.HORIZONTAL);
+                copyBtn.setGravity(Gravity.CENTER_VERTICAL);
+                copyBtn.setPadding((int)(8*dp), (int)(4*dp), (int)(8*dp), (int)(4*dp));
+                
+                ImageView copyBtnIcon = new ImageView(itemView.getContext());
+                copyBtnIcon.setImageResource(android.R.drawable.ic_menu_set_as);
+                copyBtnIcon.setColorFilter(Color.parseColor("#586069"));
+                LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams((int)(14*dp), (int)(14*dp));
+                iconParams.setMarginEnd((int)(4*dp));
+                copyBtnIcon.setLayoutParams(iconParams);
+                
+                TextView copyBtnText = new TextView(itemView.getContext());
+                copyBtnText.setText("Copy code");
+                copyBtnText.setTextColor(Color.parseColor("#586069"));
+                copyBtnText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+                
+                copyBtn.addView(copyBtnIcon);
+                copyBtn.addView(copyBtnText);
+                
+                // Copy functionality
+                final String[] copiedState = {null};
+                copyBtn.setOnClickListener(v -> {
+                    copyToClipboard(code);
+                    copyBtnText.setText("Copied!");
+                    handler.postDelayed(() -> copyBtnText.setText("Copy code"), 2000);
+                });
+                
+                header.addView(langText);
+                header.addView(copyBtn);
+                
+                // Code content (scrollable)
+                ScrollView codeScroll = new ScrollView(itemView.getContext());
+                codeScroll.setHorizontalScrollBarEnabled(true);
+                LinearLayout.LayoutParams scrollParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                );
+                codeScroll.setLayoutParams(scrollParams);
+                
+                TextView codeText = new TextView(itemView.getContext());
+                codeText.setText(code);
+                codeText.setTextColor(Color.parseColor("#24292E"));
+                codeText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+                codeText.setTypeface(android.graphics.Typeface.MONOSPACE);
+                codeText.setPadding((int)(12*dp), (int)(12*dp), (int)(12*dp), (int)(12*dp));
+                codeText.setHorizontallyScrolling(true);
+                
+                codeScroll.addView(codeText);
+                
+                codeBlock.addView(header);
+                codeBlock.addView(codeScroll);
+                
+                return codeBlock;
+            }
+
+            private String formatText(String text) {
+                // Format bold **text**
+                text = text.replaceAll("\\*\\*(.+?)\\*\\*", "<b>$1</b>");
+                // Format italic *text*
+                text = text.replaceAll("\\*(.+?)\\*", "<i>$1</i>");
+                // Format bullet points
+                text = text.replaceAll("(?m)^• (.+)$", "<br/>• $1");
+                // Format numbered lists
+                text = text.replaceAll("(?m)^(\\d+)\\. (.+)$", "<br/><b>$1.</b> $2");
+                // Remove leading <br/>
+                text = text.replaceAll("^<br/>", "");
+                
+                return text;
+            }
+        }
+    }
+
+    // ======================= COPY TO CLIPBOARD =======================
+    private void copyToClipboard(String text) {
+        try {
+            ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            ClipData clip = ClipData.newPlainText("Message", text);
+            clipboard.setPrimaryClip(clip);
+            
+            handler.post(() -> {
+                Toast.makeText(this, "✓ Copied", Toast.LENGTH_SHORT).show();
+            });
+            
+            Log.d(TAG, "✅ Text copied");
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error copying", e);
+        }
+    }
+
+    // ======================= REST OF THE SERVICE (UNCHANGED) =======================
+    
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
@@ -132,164 +565,6 @@ public class OverlayService extends Service {
         
         startForeground(NOTIFICATION_ID, notification);
         Log.d(TAG, "✅ Foreground notification started");
-    }
-
-    // Chat Message Model
-    private static class ChatMessage {
-        String message;
-        boolean isUser;
-        String timestamp;
-
-        ChatMessage(String message, boolean isUser, String timestamp) {
-            this.message = message;
-            this.isUser = isUser;
-            this.timestamp = timestamp;
-        }
-    }
-
-    // Chat Adapter with COPY FUNCTIONALITY
-    private class ChatAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
-        private static final int TYPE_USER = 1;
-        private static final int TYPE_AI = 2;
-        
-        private List<ChatMessage> messages;
-
-        ChatAdapter(List<ChatMessage> messages) {
-            this.messages = messages;
-        }
-
-        @Override
-        public int getItemViewType(int position) {
-            return messages.get(position).isUser ? TYPE_USER : TYPE_AI;
-        }
-
-        @Override
-        public RecyclerView.ViewHolder onCreateViewHolder(ViewGroup parent, int viewType) {
-            LayoutInflater inflater = LayoutInflater.from(parent.getContext());
-            if (viewType == TYPE_USER) {
-                View view = inflater.inflate(R.layout.item_chat_user, parent, false);
-                return new UserMessageViewHolder(view);
-            } else {
-                View view = inflater.inflate(R.layout.item_chat_ai, parent, false);
-                return new AIMessageViewHolder(view);
-            }
-        }
-
-        @Override
-        public void onBindViewHolder(RecyclerView.ViewHolder holder, int position) {
-            ChatMessage message = messages.get(position);
-            
-            if (holder.getItemViewType() == TYPE_USER) {
-                ((UserMessageViewHolder) holder).bind(message);
-            } else {
-                ((AIMessageViewHolder) holder).bind(message);
-            }
-        }
-
-        @Override
-        public int getItemCount() {
-            return messages.size();
-        }
-
-        // USER MESSAGE VIEW HOLDER WITH COPY
-        class UserMessageViewHolder extends RecyclerView.ViewHolder {
-            TextView messageText, timeText;
-            LinearLayout messageBubble;
-
-            UserMessageViewHolder(View itemView) {
-                super(itemView);
-                messageText = itemView.findViewById(R.id.messageText);
-                timeText = itemView.findViewById(R.id.timeText);
-                messageBubble = itemView.findViewById(R.id.messageBubble);
-                
-                // ✅ Setup long press to copy
-                messageBubble.setOnLongClickListener(v -> {
-                    copyToClipboard(messageText.getText().toString());
-                    return true;
-                });
-                
-                // ✅ Visual feedback on press
-                messageBubble.setOnTouchListener((v, event) -> {
-                    switch (event.getAction()) {
-                        case MotionEvent.ACTION_DOWN:
-                            messageBubble.setAlpha(0.7f);
-                            break;
-                        case MotionEvent.ACTION_UP:
-                        case MotionEvent.ACTION_CANCEL:
-                            messageBubble.setAlpha(1f);
-                            break;
-                    }
-                    return false;
-                });
-            }
-
-            void bind(ChatMessage message) {
-                messageText.setText(message.message);
-                timeText.setText(message.timestamp);
-            }
-        }
-
-        // AI MESSAGE VIEW HOLDER WITH COPY
-        class AIMessageViewHolder extends RecyclerView.ViewHolder {
-            TextView messageText, timeText;
-            LinearLayout messageBubble;
-            ImageView aiAvatar;
-
-            AIMessageViewHolder(View itemView) {
-                super(itemView);
-                messageText = itemView.findViewById(R.id.messageText);
-                timeText = itemView.findViewById(R.id.timeText);
-                messageBubble = itemView.findViewById(R.id.messageBubble);
-                aiAvatar = itemView.findViewById(R.id.aiAvatar);
-                
-                // ✅ Setup long press to copy (removes HTML formatting)
-                messageBubble.setOnLongClickListener(v -> {
-                    // Remove HTML formatting when copying
-                    String plainText = Html.fromHtml(messageText.getText().toString()).toString();
-                    copyToClipboard(plainText);
-                    return true;
-                });
-                
-                // ✅ Visual feedback on press
-                messageBubble.setOnTouchListener((v, event) -> {
-                    switch (event.getAction()) {
-                        case MotionEvent.ACTION_DOWN:
-                            messageBubble.setAlpha(0.7f);
-                            break;
-                        case MotionEvent.ACTION_UP:
-                        case MotionEvent.ACTION_CANCEL:
-                            messageBubble.setAlpha(1f);
-                            break;
-                    }
-                    return false;
-                });
-            }
-
-            void bind(ChatMessage message) {
-                messageText.setText(Html.fromHtml(message.message));
-                timeText.setText(message.timestamp);
-            }
-        }
-    }
-
-    // ✅ COPY TO CLIPBOARD HELPER METHOD
-    private void copyToClipboard(String text) {
-        try {
-            ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-            ClipData clip = ClipData.newPlainText("AI Message", text);
-            clipboard.setPrimaryClip(clip);
-            
-            handler.post(() -> {
-                Toast.makeText(this, "📋 Copied to clipboard", Toast.LENGTH_SHORT).show();
-            });
-            
-            Log.d(TAG, "✅ Text copied: " + text.substring(0, Math.min(50, text.length())) + "...");
-        } catch (Exception e) {
-            Log.e(TAG, "❌ Error copying to clipboard", e);
-            handler.post(() -> {
-                Toast.makeText(this, "❌ Failed to copy", Toast.LENGTH_SHORT).show();
-            });
-        }
     }
 
     @Override
@@ -430,6 +705,9 @@ public class OverlayService extends Service {
             }
         });
     }
+
+    // Continue with createCompactChat and all remaining methods...
+    // (Keep all other methods exactly the same as before)
 
     private void createCompactChat() {
         float dp = getResources().getDisplayMetrics().density;
@@ -841,8 +1119,7 @@ public class OverlayService extends Service {
             public void onSuccess(String response) {
                 handler.post(() -> {
                     hideTypingIndicator();
-                    String formattedResponse = formatMessageToHtml(response);
-                    addAIMessage(formattedResponse, "Just now");
+                    addAIMessage(response, "Just now");
                 });
             }
 
@@ -854,18 +1131,6 @@ public class OverlayService extends Service {
                 });
             }
         });
-    }
-    
-    private String formatMessageToHtml(String text) {
-        if (text == null) return "";
-        
-        text = text.replaceAll("\\*\\*(.+?)\\*\\*", "<b>$1</b>");
-        text = text.replaceAll("\\*(.+?)\\*", "<i>$1</i>");
-        text = text.replaceAll("(?m)^• (.+)$", "<br/>• $1");
-        text = text.replaceAll("(?m)^(\\d+)\\. (.+)$", "<br/><b>$1.</b> $2");
-        text = text.replaceAll("^<br/>", "");
-        
-        return text;
     }
 
     private void expandChat() {
